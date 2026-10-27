@@ -155,7 +155,20 @@
   function avatar(email, size) {
     const u = user(email);
     const c = AVATAR_COLORS[hash(u.Email || u.Name) % AVATAR_COLORS.length];
-    return `<span class="avatar ${size || ''}" style="background:${c}" title="${esc(u.Name)}">${esc(initials(u.Name))}</span>`;
+    const inner = u.Photo ? `<img src="${esc(u.Photo)}" alt="" referrerpolicy="no-referrer" loading="lazy" onerror="this.remove()">` : '';
+    return `<span class="avatar ${size || ''}" style="background:${c}" title="${esc(u.Name)}">${esc(initials(u.Name))}${inner}</span>`;
+  }
+  /** Presence (admins & managers only): 'online' (used the board in the last 10 min), 'active' (has signed in), 'pending' (never signed in). */
+  function presenceOf(u) {
+    if (!u) return 'pending';
+    if ((S.data.presence || {})[u.Email]) return 'online';
+    return u.LastLogin ? 'active' : 'pending';
+  }
+  function presenceBadge(u) {
+    const p = presenceOf(u);
+    if (p === 'online') return '<span class="pres pres-online"><i></i>Online now</span>';
+    if (p === 'active') return `<span class="pres pres-active"><i></i>Active · ${esc(relTime(u.LastSeen || u.LastLogin))}</span>`;
+    return '<span class="pres pres-pending"><i></i>Not activated yet</span>';
   }
   const person = (email, size) => (email ? `<span class="person">${avatar(email, size || 'sm')}<span>${esc(uname(email))}</span></span>` : '<span class="tag tag-amber" title="Not assigned yet">TBD</span>');
   const statusBadge = (s) => `<span class="badge st-${slug(s)}">${esc(s)}</span>`;
@@ -385,6 +398,27 @@
     S.authLost = false;
     await loadAll();
     enterApp();
+    if (d.firstLogin) toast(`Welcome, ${String(d.user.Name).split(' ')[0]}! Your profile is now active.`, 'ok', { timeout: 6000 });
+  }
+
+  /** New people pick their team once (BD / Marketing …). */
+  function askTeam() {
+    const teams = settingList('DEPARTMENTS');
+    if (!S.me || !teams.length || user(S.me.email).Department || S.askedTeam) return;
+    S.askedTeam = true;
+    const m = openModal({
+      title: 'Which team are you in?', size: 'sm', sticky: true,
+      body: `<p class="muted">Pick your team so your tasks and name appear in the right group. An admin can change it later.</p>
+        <div class="team-pick mt-16">${teams.map((t) => `<button class="team-option" data-team="${esc(t)}">${icon('team')}<b>${esc(t)}</b></button>`).join('')}</div>`,
+      foot: '<button class="btn btn-ghost" data-close>Later</button>'
+    });
+    m.el.querySelectorAll('[data-team]').forEach((b) => {
+      b.onclick = async () => {
+        m.el.querySelectorAll('[data-team]').forEach((x) => { x.disabled = true; });
+        try { const r = await write('setMyTeam', { team: b.dataset.team }); upsert('users', r.user); m.close(); toast(`You joined ${b.dataset.team}`); rerender(); }
+        catch (e) { showError(e, 'Not saved'); m.el.querySelectorAll('[data-team]').forEach((x) => { x.disabled = false; }); }
+      };
+    });
   }
 
   async function signOut() {
@@ -405,7 +439,7 @@
     S.me = d.me;
     S.data = {
       tasks: d.tasks || [], initiatives: d.initiatives || [], projects: d.projects || [], users: d.users || [],
-      commentStats: d.commentStats || {}, recentComments: d.recentComments || [], notifications: d.notifications || [],
+      presence: d.presence || {}, commentStats: d.commentStats || {}, recentComments: d.recentComments || [], notifications: d.notifications || [],
       activity: d.activity || [], settings: d.settings || {}
     };
     S.userMap = {};
@@ -482,6 +516,7 @@
     if (!location.hash) location.hash = '#/dashboard';
     route(true);
     startPolling();
+    setTimeout(askTeam, 400);
   }
 
   function updateBanner(errorText) {
@@ -1186,15 +1221,17 @@
       const ts = S.data.tasks.filter((t) => !t.Archived && t.AssignedTo === u.Email);
       return { u, open: ts.filter((t) => OPEN(t.Status)).length, overdue: ts.filter(isOverdue).length, week: ts.filter(isDueThisWeek).length, done30: ts.filter((t) => t.Status === 'Completed' && t.CompletedDate >= addDays(t0, -30)).length, collab: S.data.tasks.filter((t) => !t.Archived && OPEN(t.Status) && list(t.Collaborators).includes(u.Email)).length };
     }).sort((a, b) => b.open - a.open || a.u.Name.localeCompare(b.u.Name));
-    return `<div class="view-head"><div><h2>Team overview</h2><p class="sub">${plural(users.length, 'active member')} · workload based on open assigned tasks</p></div>
+    const heads = users.filter((x) => /^head of all/i.test(x.u.Title || ''));
+    return `<div class="view-head"><div><h2>Team overview</h2><p class="sub">${plural(users.length, 'active member')} · workload based on open assigned tasks${isManager() ? ` · ${users.filter((x) => presenceOf(x.u) === 'online').length} online now` : ''}</p></div>
       ${isManager() ? `<div class="actions"><button class="btn btn-primary" data-action="newUser">${icon('plus')}Add team member</button><a class="btn" href="#/settings" data-action="settingsTab" data-tab="users">Manage team</a></div>` : ''}</div>
+      ${heads.length ? `<div class="lead-banner">${heads.map((x) => `${avatar(x.u.Email, 'lg')}<div><div class="muted" style="font-size:11px;text-transform:uppercase;letter-spacing:.08em;font-weight:700">Leadership</div><b>${esc(x.u.Name)}</b> · ${esc(x.u.Title)}</div>`).join('')}</div>` : ''}
       ${(() => { const groups = [...new Set(users.map((x) => x.u.Department || 'Other'))].sort((a, b) => (settingList('DEPARTMENTS').indexOf(a) + 1 || 99) - (settingList('DEPARTMENTS').indexOf(b) + 1 || 99));
         return groups.map((g) => { const tbd = S.data.tasks.filter((t) => !t.Archived && OPEN(t.Status) && !t.AssignedTo && teamOf(t) === g).length; return `<h3 class="mt-16 mb-16 row">${esc(g)} <span class="muted" style="font-weight:500">${users.filter((x) => (x.u.Department || 'Other') === g).length} people${tbd ? ` · <a href="javascript:void 0" data-action="ownerChip" data-preset='${esc(JSON.stringify({ team: g, assignee: '__tbd__' }))}'>${tbd} TBD tasks</a>` : ''}</span></h3><div class="team-grid">${users.filter((x) => (x.u.Department || 'Other') === g).map(memberCard).join('')}</div>`; }).join(''); })()}`;
   }
   function memberCard(x) {
     const maxOpen = 10;
     return `<div class="member" data-action="filterTasks" data-preset='${esc(JSON.stringify({ assignee: x.u.Email, status: 'open' }))}' tabindex="0">
-        <div class="who">${avatar(x.u.Email, 'lg')}<div style="min-width:0"><b>${esc(x.u.Name)}</b><div class="muted" style="font-size:12px">${esc(x.u.Department || x.u.Role)}</div></div><span class="tag" style="margin-left:auto">${esc(x.u.Role)}</span></div>
+        <div class="who">${avatar(x.u.Email, 'lg')}<div style="min-width:0"><b>${esc(x.u.Name)}</b><div class="muted" style="font-size:12px">${esc(x.u.Title || x.u.Department || x.u.Role)}</div>${isManager() ? `<div class="mt-8">${presenceBadge(x.u)}</div>` : ''}</div><span class="tag ${x.u.Role === 'Admin' ? 'tag-teal' : ''}" style="margin-left:auto">${/^head/i.test(x.u.Title) ? '★ Head' : esc(x.u.Role)}</span></div>
         <div class="stats"><div><b>${x.open}</b><span>Open</span></div><div><b class="${x.overdue ? 'due-overdue' : ''}">${x.overdue}</b><span>Overdue</span></div><div><b>${x.week}</b><span>This week</span></div><div><b>${x.done30}</b><span>Done 30d</span></div></div>
         <div><div class="progress"><i style="width:${Math.min(100, (x.open / maxOpen) * 100)}%;background:${x.overdue ? 'var(--red)' : 'var(--navy-600)'}"></i></div><div class="muted mt-8" style="font-size:12px">${x.collab ? `Collaborating on ${plural(x.collab, 'open task')}` : 'No collaborations'}</div></div>
       </div>`;
@@ -1220,11 +1257,21 @@
         <div class="row mt-16"><button class="btn" data-action="signOut">${icon('logout')}Sign out</button></div></div></div>`;
     } else if (t === 'users') {
       const us = S.data.users.slice().sort((a, b) => Number(b.Active) - Number(a.Active) || a.Name.localeCompare(b.Name));
-      body = `<div class="card"><div class="card-head"><h3>Users &amp; roles</h3><span class="sub">${us.filter((u) => u.Active).length} active</span><div class="actions"><button class="btn btn-primary btn-sm" data-action="newUser">${icon('plus', 'ic-sm')}Add user</button></div></div>
-        <div class="table-wrap"><table class="tbl"><thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Department</th><th>Status</th><th>Last sign-in</th><th></th></tr></thead><tbody>
-        ${us.map((u) => `<tr ${canManageUser(u) ? 'data-action="editUser"' : 'style="cursor:default"'} data-email="${esc(u.Email)}"><td>${person(u.Email)}</td><td>${esc(u.Email)}</td><td><span class="tag">${esc(u.Role)}</span></td><td>${esc(u.Department || '—')}</td><td>${u.Active ? '<span class="badge st-completed">Active</span>' : '<span class="badge st-not-started">Inactive</span>'}</td><td class="muted">${u.LastLogin ? esc(relTime(u.LastLogin)) : 'Never'}</td><td class="row-actions">${canManageUser(u) ? `<button class="btn btn-xs" data-action="editUser" data-email="${esc(u.Email)}">Edit</button>` : ''}</td></tr>`).join('')}
+      const live = us.filter((u) => u.Active);
+      const cnt = (p) => live.filter((u) => presenceOf(u) === p).length;
+      body = `<div class="kpis" style="grid-template-columns:repeat(auto-fit,minmax(170px,1fr))">
+          <div class="kpi" style="--kpi:#16A34A;cursor:default"><span class="kpi-label">Online now</span><span class="kpi-value">${cnt('online')}</span><span class="kpi-foot">Used the board in the last 10 min</span></div>
+          <div class="kpi" style="--kpi:var(--teal-500);cursor:default"><span class="kpi-label">Activated profiles</span><span class="kpi-value">${cnt('online') + cnt('active')}</span><span class="kpi-foot">Signed in at least once</span></div>
+          <div class="kpi" style="--kpi:#D97706;cursor:default"><span class="kpi-label">Not activated yet</span><span class="kpi-value">${cnt('pending')}</span><span class="kpi-foot">Never signed in</span></div>
+          <div class="kpi" style="--kpi:#94A3B8;cursor:default"><span class="kpi-label">Deactivated</span><span class="kpi-value">${us.length - live.length}</span></div></div>
+        <div class="card"><div class="card-head"><h3>${isAdmin() ? 'Users &amp; roles' : 'Team members'}</h3><span class="sub">${live.length} active accounts</span><div class="actions"><button class="btn btn-primary btn-sm" data-action="newUser">${icon('plus', 'ic-sm')}Add team member</button></div></div>
+        <div class="table-wrap"><table class="tbl"><thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Team</th><th>Status</th><th>Last seen</th><th></th></tr></thead><tbody>
+        ${us.map((u) => `<tr style="cursor:default" data-email="${esc(u.Email)}"><td>${person(u.Email)}${u.Title ? `<div class="muted" style="font-size:11.5px;margin-left:30px">${esc(u.Title)}</div>` : ''}</td><td style="font-size:12.5px">${esc(u.Email)}</td>
+          <td>${isAdmin() ? `<select class="select select-sm" style="width:118px" data-change="userRole" data-email="${esc(u.Email)}" aria-label="Role of ${esc(u.Name)}">${opts(ROLES, u.Role)}</select>` : `<span class="tag">${esc(u.Role)}</span>`}</td>
+          <td>${esc(u.Department || '—')}</td><td>${u.Active ? presenceBadge(u) : '<span class="badge st-not-started">Deactivated</span>'}</td><td class="muted">${u.LastSeen || u.LastLogin ? esc(relTime(u.LastSeen || u.LastLogin)) : 'Never'}</td>
+          <td class="row-actions">${canManageUser(u) ? `<button class="btn btn-xs" data-action="editUser" data-email="${esc(u.Email)}">Edit</button>` : ''}</td></tr>`).join('')}
         </tbody></table></div></div>
-        <p class="muted mt-8" style="font-size:12px">Users from <b>${esc(S.data.settings.ALLOWED_DOMAINS || '—')}</b> ${String(S.data.settings.AUTO_PROVISION).toUpperCase() === 'TRUE' ? 'are added automatically as ' + esc(S.data.settings.DEFAULT_ROLE) + ' on first Google sign-in' : 'must be added here before they can sign in'}. Deactivate users instead of deleting them so their history stays intact.</p>`;
+        <p class="muted mt-8" style="font-size:12px">Users from <b>${esc(S.data.settings.ALLOWED_DOMAINS || '—')}</b> ${String(S.data.settings.AUTO_PROVISION).toUpperCase() === 'TRUE' ? 'are added automatically as ' + esc(S.data.settings.DEFAULT_ROLE) + ' on first Google sign-in' : 'must be added here before they can sign in'}. When someone signs in with Google for the first time, their profile is <b>activated</b> automatically: their company name and photo are picked up, and if a profile with the same first name was waiting for them (e.g. "Nitish"), it is linked to their real email so their tasks stay with them. Deactivate users instead of deleting them so their history stays intact.</p>`;
     } else if (t === 'import') {
       body = importPanel();
     } else if (t === 'config') {
@@ -2042,6 +2089,13 @@
     dash: (el) => { S.filters.dash[el.dataset.key] = el.value; if (el.dataset.key === 'initiative') S.filters.dash.project = ''; renderView(); },
     taskFilter: (el) => { const f = S.filters[el.dataset.scope]; f[el.dataset.key] = el.type === 'checkbox' ? el.checked : el.value; if (el.dataset.key === 'initiative') f.project = ''; f.page = 1; renderView(); },
     pageSize: (el) => { const f = S.filters[el.dataset.scope]; f.size = +el.value; f.page = 1; refreshTable(el.dataset.scope); },
+    userRole: async (el) => {
+      const u = user(el.dataset.email), role = el.value;
+      if (role === u.Role) return;
+      if (!(await confirmDialog({ title: 'Change role?', message: `${u.Name} will become ${role}.`, confirmText: 'Change role' }))) { el.value = u.Role; return; }
+      try { const d = await write('saveUser', { email: u.Email, patch: { Role: role } }); upsert('users', d.user); toast(`${u.Name} is now ${role}`); rerender(); }
+      catch (e) { el.value = u.Role; showError(e, 'Role not changed'); }
+    },
     quickStatus: (el) => changeTaskField(el.dataset.id, { Status: el.value }),
     drawerField: (el) => { const v = el.dataset.field === 'Progress' ? Number(el.value) : el.value; changeTaskField(S.drawer.id, { [el.dataset.field]: v }); },
     kanbanFilter: (el) => { S.filters.kanban[el.dataset.key] = el.value; renderView(); },
