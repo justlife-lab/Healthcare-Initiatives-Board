@@ -9,5 +9,5 @@ window.HIB_CONFIG = {
   // 2) Your Google OAuth "Web application" client ID (…apps.googleusercontent.com).
   //    Must be identical to GOOGLE_CLIENT_ID in the Settings tab of the spreadsheet.
   //    Not needed while Settings ▸ AUTH_MODE = test.
-  GOOGLE_CLIENT_ID: ''
+  GOOGLE_CLIENT_ID: '676386166698-m6lkakhva28q1f5h4nqdqrad0cg75cmj.apps.googleusercontent.com'
 };
