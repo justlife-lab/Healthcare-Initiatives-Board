@@ -838,7 +838,7 @@
           <td>${dueCell(t)}</td>
           <td class="c-prog" style="min-width:120px">${progressBar(effProgress(t), t.Status === 'Completed')}</td>
           <td>${commentBadge(t)}</td>
-          <td class="row-actions c-cat">${canCreateTask() ? `<button class="icon-btn sm" data-action="duplicateTask" data-id="${esc(t.TaskID)}" title="Duplicate" aria-label="Duplicate">${icon('copy', 'ic-sm')}</button>` : ''}${canArchiveTask(t) ? `<button class="icon-btn sm" data-action="archiveTask" data-id="${esc(t.TaskID)}" title="${t.Archived ? 'Restore' : 'Archive'}" aria-label="${t.Archived ? 'Restore' : 'Archive'}">${icon(t.Archived ? 'refresh' : 'archive', 'ic-sm')}</button>` : ''}</td>
+          <td class="row-actions c-cat">${canCreateTask() ? `<button class="icon-btn sm" data-action="duplicateTask" data-id="${esc(t.TaskID)}" title="Duplicate" aria-label="Duplicate">${icon('copy', 'ic-sm')}</button>` : ''}${canArchiveTask(t) ? `<button class="icon-btn sm" data-action="archiveTask" data-id="${esc(t.TaskID)}" title="${t.Archived ? 'Restore' : 'Archive'}" aria-label="${t.Archived ? 'Restore' : 'Archive'}">${icon(t.Archived ? 'refresh' : 'archive', 'ic-sm')}</button>` : ''}${isAdmin() ? `<button class="icon-btn sm danger-btn" data-action="deleteTask" data-id="${esc(t.TaskID)}" title="Delete permanently" aria-label="Delete">${icon('trash', 'ic-sm')}</button>` : ''}</td>
         </tr>`;
       }).join('')}</tbody></table></div>
       <div class="pager"><span>Showing ${(f.page - 1) * f.size + 1}–${Math.min(f.page * f.size, sorted.length)} of ${sorted.length}</span>
@@ -1438,6 +1438,7 @@
             ${canCreateTask() ? `<button class="icon-btn sm" data-action="duplicateTask" data-id="${esc(t.TaskID)}" title="Duplicate" aria-label="Duplicate task">${icon('copy', 'ic-sm')}</button>` : ''}
             ${canArchiveTask(t) ? `<button class="icon-btn sm" data-action="archiveTask" data-id="${esc(t.TaskID)}" title="${t.Archived ? 'Restore' : 'Archive'}" aria-label="${t.Archived ? 'Restore' : 'Archive'} task">${icon(t.Archived ? 'refresh' : 'archive', 'ic-sm')}</button>` : ''}
             <button class="icon-btn sm" data-action="copyLink" data-id="${esc(t.TaskID)}" title="Copy link" aria-label="Copy link">${icon('link', 'ic-sm')}</button>
+            ${isAdmin() ? `<button class="icon-btn sm danger-btn" data-action="deleteTask" data-id="${esc(t.TaskID)}" title="Delete permanently (admin)" aria-label="Delete task">${icon('trash', 'ic-sm')}</button>` : ''}
             <button class="icon-btn sm" data-action="closeDrawer" aria-label="Close">${icon('x')}</button>
           </div></div>
         <h2>${esc(t.Title)}</h2>
@@ -1983,6 +1984,19 @@
     editTask: (el) => { const t = taskById(el.dataset.id); if (t) openTaskForm(t); },
     duplicateTask: (el) => duplicateTask(el.dataset.id),
     archiveTask: (el) => archiveTask(el.dataset.id),
+    deleteTask: async (el) => {
+      const id = el.dataset.id, t = taskById(id);
+      if (!t || !isAdmin()) return;
+      const n = (S.data.commentStats[id] || {}).count || 0;
+      if (!(await confirmDialog({ title: `Delete ${id} permanently?`, message: `“${t.Title}”${n ? ` and its ${plural(n, 'comment')}` : ''} will be removed from the board for everyone. A recovery copy is kept in the DeletedTasks tab of the spreadsheet. Tip: use Archive if you only want to hide it.`, confirmText: 'Delete task', danger: true }))) return;
+      try {
+        await write('deleteTask', { id });
+        S.data.tasks = S.data.tasks.filter((x) => x.TaskID !== id);
+        if (S.drawer && S.drawer.id === id) closeDrawer();
+        rerender();
+        toast(`${id} deleted`);
+      } catch (e) { showError(e, 'Not deleted'); }
+    },
     copyLink: (el) => { const url = location.href.split('#')[0] + '#/tasks?task=' + encodeURIComponent(el.dataset.id); (navigator.clipboard ? navigator.clipboard.writeText(url) : Promise.reject()).then(() => toast('Link copied')).catch(() => toast(url, 'warn', { timeout: 8000 })); },
     postComment: (el) => postComment(el.dataset.task, '', $('#newComment'), el),
     postReply: (el) => postComment(el.dataset.task, el.dataset.id, $('#reply-' + CSS.escape(el.dataset.id)), el),

@@ -604,3 +604,4 @@ table.tbl { width: 100%; border-collapse: collapse; }
 .team-option:hover { border-color: var(--teal-500); background: var(--teal-50); }
 .lead-banner { display: flex; align-items: center; gap: 14px; padding: 14px 18px; background: linear-gradient(90deg, var(--navy-800), var(--navy-700)); color: #fff; border-radius: var(--radius); margin-bottom: 8px; flex-wrap: wrap; }
 .lead-banner .muted { color: #9CC9F5; }
+.danger-btn { color: var(--red); } .danger-btn:hover { background: var(--red-bg); }
