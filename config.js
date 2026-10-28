@@ -4,7 +4,7 @@
  * ===================================================================== */
 window.HIB_CONFIG = {
   // 1) Your Apps Script web-app URL (Deploy ▸ Manage deployments ▸ Web app URL, ends in /exec).
-  API_URL: 'https://script.google.com/macros/s/AKfycbwJ-Ri4HoIM3MT6livOs7bRfx7wCoqA1kVJX7q1Ws0VAX8AUxjUp1Hj__dEz4mHmQ/exec',
+  API_URL: 'https://script.google.com/macros/s/AKfycbyfFB0Wnvzqg6EX7N-26pkLHotjBjsKOXMG5JKBFdVDE6E0cGDSW2jo1mpI31vfkXZY/exec',
 
   // 2) Your Google OAuth "Web application" client ID (…apps.googleusercontent.com).
   //    Must be identical to GOOGLE_CLIENT_ID in the Settings tab of the spreadsheet.
