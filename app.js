@@ -21,7 +21,7 @@
   const READ_ACTIONS = new Set(['bootstrap', 'sync', 'getTask', 'getActivity', 'ping', 'config']);
   const AUTH_ERRORS = new Set(['AUTH_EXPIRED', 'AUTH_REQUIRED', 'UNAUTHORIZED', 'AUTH_INVALID']);
   const PAGE_SIZES = [25, 50, 100];
-  const VERSION = '1.0.0';
+  const VERSION = '1.7.0'; // must match CONFIG.APP_VERSION in Code.gs
 
   const defaultTaskFilter = () => ({ q: '', meeting: '', team: '', status: '', priority: '', assignee: '', initiative: '', project: '', category: '', due: '', archived: false, sort: 'DueDate', dir: 1, page: 1, size: 25 });
 
@@ -522,6 +522,7 @@
 
   function applyData(d) {
     S.rev = d.rev;
+    S.serverVersion = d.version || 'old';
     S.me = d.me;
     S.data = {
       tasks: d.tasks || [], initiatives: d.initiatives || [], projects: d.projects || [], users: d.users || [],
@@ -548,7 +549,7 @@
     if (!S.saving) setSync('busy', 'Syncing…');
     try {
       const d = await api('sync', { rev: force ? null : S.rev });
-      if (d.changed) { applyData(d); rerender(); checkNewNotifications(false); }
+      if (d.changed) { applyData(d); rerender(); updateBanner(); checkNewNotifications(false); }
       S.lastSync = Date.now(); S.syncFails = 0;
       if (!S.saving) setSync('ok', syncIdleText());
       $('#banner').classList.contains('err') && updateBanner();
@@ -608,6 +609,11 @@
 
   function updateBanner(errorText) {
     const b = $('#banner');
+    if (!errorText && S.serverVersion && S.serverVersion !== VERSION) {
+      b.hidden = false; b.className = 'banner err';
+      b.innerHTML = icon('alert') + `<span><b>The server script is out of date</b> (server ${esc(S.serverVersion === 'old' ? 'older than 1.7' : 'v' + S.serverVersion)}, website v${VERSION}). Some changes, such as Stage and Meeting, will not be saved. ${isAdmin() ? 'Fix: in Apps Script paste the latest Code.gs, then <b>Deploy ▸ Manage deployments ▸ ✏ Edit ▸ Version: New version ▸ Deploy</b>.' : 'Please tell an administrator.'}</span>`;
+      return;
+    }
     if (errorText) {
       b.hidden = false; b.className = 'banner err';
       b.innerHTML = icon('alert') + `<span>${esc(errorText)}</span><button class="btn btn-sm" data-action="syncNow">${icon('refresh')}Retry</button>`;
@@ -1385,6 +1391,7 @@
         <dt>Sign-in mode</dt><dd>${esc(S.data.settings.AUTH_MODE)}</dd>
         <dt>Synchronisation</dt><dd>Polling every ${S.pollSec || 30}s while this tab is visible, immediately when you return to the tab, and after every change you save. Changes by others appear within one interval.</dd>
         <dt>Last synced</dt><dd>${esc(fmtDateTime(new Date(S.lastSync).toISOString()))}</dd>
+        <dt>Versions</dt><dd>Website v${VERSION} · server ${esc(S.serverVersion === 'old' ? 'older than 1.7 (redeploy!)' : 'v' + S.serverVersion)}</dd>
         <dt>Data revision</dt><dd class="mono">${esc(S.rev)}</dd>
         <dt>Records loaded</dt><dd>${S.data.tasks.length} tasks · ${S.data.initiatives.length} initiatives · ${S.data.projects.length} projects · ${S.data.users.length} users</dd>
         </dl><div class="row mt-16"><button class="btn" data-action="syncNow">${icon('refresh')}Sync now</button></div></div></div>`;
