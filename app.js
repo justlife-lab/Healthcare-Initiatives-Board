@@ -267,10 +267,7 @@
     const req = { action, payload: payload || {}, token: S.token };
     let res = null;
     if (!CFG.API_URL) throw new ApiError('CONFIG', 'The board is not connected yet: add your Apps Script web-app URL to API_URL in config.js.');
-    if (useJsonp()) {
-      try { res = await jsonp(req); }
-      catch (e) { throw new ApiError('NETWORK', e.message); }
-    } else {
+    {
       const tries = READ_ACTIONS.has(action) ? 3 : 1;
       let lastErr;
       for (let i = 0; i < tries && !res; i++) {
@@ -285,10 +282,6 @@
           if (i < tries - 1) await sleep(700 * (i + 1));
         }
       }
-      if (!res && lastErr && /fetch|network|load/i.test(lastErr.message)) {
-        // Browser blocked the cross-site call (deployment limited to the company domain) → switch to the script-tag transport.
-        try { res = await jsonp(req); S.transport = 'jsonp'; store.set('hib-transport', 'jsonp'); } catch (e) { lastErr = e; }
-      }
       if (!res) throw new ApiError('NETWORK', 'Could not reach the server (' + (lastErr ? lastErr.message : 'network error') + '). Check your connection and try again.');
     }
     if (!res.ok) {
@@ -301,23 +294,6 @@
       throw err;
     }
     return res.data;
-  }
-
-  /* Transport for web apps deployed as "Anyone within <domain>" (URL contains /a/macros/<domain>/):
-   * the request is sent as a <script> GET, which carries the user's Google login and needs no CORS. */
-  function useJsonp() { return S.transport === 'jsonp' || /\/a\/macros\//.test(CFG.API_URL) || store.get('hib-transport', '') === 'jsonp'; }
-  let jsonpSeq = 0;
-  function jsonp(req) {
-    return new Promise((resolve, reject) => {
-      const cb = '__hib' + Date.now().toString(36) + (jsonpSeq++);
-      const el = document.createElement('script');
-      const timer = setTimeout(() => { done(); reject(new Error('The server did not answer in time.')); }, 45000);
-      function done() { clearTimeout(timer); try { delete window[cb]; } catch (e) { window[cb] = undefined; } el.remove(); }
-      window[cb] = (data) => { done(); resolve(data); };
-      el.onerror = () => { done(); reject(new Error('Could not load the board backend. Make sure you are signed in to your company Google account in this browser (open gmail.com to check), then try again.')); };
-      el.src = CFG.API_URL + (CFG.API_URL.includes('?') ? '&' : '?') + 'callback=' + cb + '&p=' + encodeURIComponent(JSON.stringify(req));
-      document.head.appendChild(el);
-    });
   }
 
   /** Writes: shows saving state, triggers a background sync afterwards. */
@@ -1432,15 +1408,6 @@
     const rows = body.map((r) => { const o = {}; mapping.forEach((k, i) => { if (k && r[i] !== undefined && !o[k]) o[k] = r[i]; }); return o; }).filter((o) => o.Title);
     return { rows, mapping };
   }
-  async function importChunks(rows, dryRun) {
-    const size = 20, out = { dryRun, total: 0, importable: 0, imported: 0, results: [] };
-    for (let i = 0; i < rows.length; i += size) {
-      const r = dryRun ? await api('importTasks', { rows: rows.slice(i, i + size), dryRun: true }) : await write('importTasks', { rows: rows.slice(i, i + size) });
-      out.total += r.total; out.importable += r.importable; out.imported += r.imported;
-      r.results.forEach((x) => { x.row += i; out.results.push(x); });
-    }
-    return out;
-  }
   function importPanel() {
     const st = S.importState || (S.importState = { text: '', preview: null });
     const p = st.preview;
@@ -2143,14 +2110,14 @@
       const { rows } = mapImport(text);
       if (!rows.length) return toast('No rows with a Title found. Paste rows including a header line.', 'warn');
       el.disabled = true;
-      try { S.importState.preview = await importChunks(rows, true); renderView(); }
+      try { S.importState.preview = await api('importTasks', { rows, dryRun: true }); renderView(); }
       catch (e) { showError(e, 'Preview failed'); } finally { el.disabled = false; }
     },
     importRun: async (el) => {
       const { rows } = mapImport(S.importState.text);
       if (!(await confirmDialog({ title: 'Import tasks?', message: `${S.importState.preview.importable} tasks will be created in Google Sheets and assignees will be notified.`, confirmText: 'Import' }))) return;
       el.disabled = true; el.innerHTML = '<span class="spinner"></span>Importing…';
-      try { const r = await importChunks(rows, false); S.importState.preview = r; S.importState.text = ''; toast(`${r.imported} tasks imported`); renderView(); }
+      try { const r = await write('importTasks', { rows }); S.importState.preview = r; S.importState.text = ''; toast(`${r.imported} tasks imported`); renderView(); }
       catch (e) { el.disabled = false; showError(e, 'Import failed'); }
     },
     ownerChip: (el) => { const p = JSON.parse(el.dataset.preset); const f = S.filters.all; const same = f.team === p.team && (f.assignee || '') === (p.assignee || ''); Object.assign(f, { team: same ? '' : p.team, assignee: same ? '' : (p.assignee || ''), page: 1 }); renderView(); },
