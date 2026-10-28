@@ -191,7 +191,8 @@
     const st = S.data.commentStats[t.TaskID];
     if (!st || !st.count) return `<span class="comment-count faint">${icon('chat', 'ic-sm')}0</span>`;
     const isNew = hasNewComments(t.TaskID);
-    return `<span class="comment-count ${isNew ? 'new' : ''}" title="${isNew ? 'New comments' : plural(st.count, 'comment')}">${icon('chat', 'ic-sm')}${st.count}</span>`;
+    const iss = st.openIssues ? `<span class="issue-pill" title="${plural(st.openIssues, 'open issue')}">${icon('alert', 'ic-sm')}${st.openIssues}</span>` : '';
+    return `<span class="comment-count ${isNew ? 'new' : ''}" title="${isNew ? 'New comments' : plural(st.count, 'comment')}">${icon('chat', 'ic-sm')}${st.count}</span>${iss}`;
   }
   function emptyState(ic, title, text, action) {
     return `<div class="empty">${icon(ic)}<h3>${esc(title)}</h3><p>${esc(text)}</p>${action || ''}</div>`;
@@ -432,7 +433,67 @@
   /* ------------------------------------------------------------------
    *  Data loading & synchronisation (polling)
    * ---------------------------------------------------------------- */
-  async function loadAll() { applyData(await api('bootstrap')); }
+  async function loadAll() { applyData(await api('bootstrap')); checkNewNotifications(true); }
+
+  /* ------------------------------------------------------------------
+   *  Popups: in-app card + desktop (browser) notification for new alerts
+   * ---------------------------------------------------------------- */
+  const NOTIF_TITLES = { MENTION: 'You were tagged', ISSUE: '⚠ Issue reported', NOTE: 'New note / instruction', ASSIGNED: 'New task for you', REASSIGNED: 'Task reassigned',
+    REPLY: 'New reply', COMMENT: 'New comment', RESOLVED: 'Issue resolved', NOT_STARTED: '⏰ Deadline near — not started', DUE_SOON: 'Due soon', OVERDUE: 'Task overdue', BLOCKED: 'Task blocked', COMPLETED: 'Task completed' };
+  const notifKey = () => 'hib-notif-known:' + (S.me ? S.me.email : '');
+  const desktopSupported = () => 'Notification' in window;
+  function checkNewNotifications(initial) {
+    if (!S.me) return;
+    const known = new Set(store.get(notifKey(), []));
+    const firstTime = !store.get(notifKey(), null);
+    store.set(notifKey(), S.data.notifications.map((n) => n.NotificationID).slice(0, 400));
+    const fresh = S.data.notifications.filter((n) => !n.Read && !known.has(n.NotificationID));
+    if (!fresh.length) return;
+    if (!firstTime && initial && fresh.length > 3) { toast(`While you were away: ${plural(fresh.length, 'new notification')}`, 'warn', { action: 'View', onAction: () => ACTIONS.toggleNotifications() }); return; }
+    if (firstTime) { if (fresh.length) setTimeout(() => toast(`You have ${plural(fresh.length, 'unread notification')}`, 'warn', { action: 'View', onAction: () => ACTIONS.toggleNotifications() }), 800); return; }
+    fresh.slice(0, 3).reverse().forEach(showPopup);
+    if (fresh.length > 3) toast(`+${fresh.length - 3} more notifications`, 'warn', { action: 'View', onAction: () => ACTIONS.toggleNotifications() });
+  }
+  function openNotif(n) { if (!n.Read) markRead([n.NotificationID]); if (n.EntityType === 'Task') navTask(n.EntityID, /COMMENT|REPLY|MENTION|ISSUE|NOTE|RESOLVED/.test(n.Type) ? 'discussion' : 'details'); }
+  function showPopup(n) {
+    const title = NOTIF_TITLES[n.Type] || 'Notification';
+    // 1) In-app popup card
+    const box = $('#popups');
+    const el = document.createElement('div');
+    el.className = 'popup-card ' + (/ISSUE|OVERDUE|BLOCKED/.test(n.Type) ? 'p-red' : /NOT_STARTED|DUE_SOON/.test(n.Type) ? 'p-amber' : '');
+    el.setAttribute('role', 'alert');
+    el.innerHTML = `${n.Actor ? avatar(n.Actor) : `<img src="logo.png" alt="" class="popup-logo">`}<div class="popup-body"><b>${esc(title)}</b><p>${esc(n.Message)}</p><div class="row mt-8"><button class="btn btn-sm btn-primary" data-open>Open</button><button class="btn btn-sm btn-ghost" data-dismiss>Dismiss</button></div></div>`;
+    el.querySelector('[data-open]').onclick = () => { el.remove(); openNotif(n); };
+    el.querySelector('[data-dismiss]').onclick = () => el.remove();
+    while (box.children.length >= 3) box.firstChild.remove();
+    box.appendChild(el);
+    setTimeout(() => el.remove(), 12000);
+    // 2) Desktop notification (Windows / macOS notification centre)
+    if (desktopSupported() && Notification.permission === 'granted') {
+      try {
+        const dn = new Notification(title, { body: n.Message, icon: 'logo.png', badge: 'logo.png', tag: n.NotificationID, requireInteraction: /MENTION|ISSUE/.test(n.Type) });
+        dn.onclick = () => { window.focus(); openNotif(n); dn.close(); };
+      } catch (e) { /* some browsers only allow notifications from a service worker */ }
+    }
+  }
+  async function enableDesktop() {
+    if (!desktopSupported()) return toast('This browser does not support desktop notifications.', 'warn');
+    const p = await Notification.requestPermission();
+    store.set('hib-desktop-asked', 1);
+    $$('.desktop-prompt').forEach((x) => x.remove());
+    if (p === 'granted') { toast('Desktop popups are on'); try { new Notification('Desktop popups are on', { body: 'You will see a popup when someone tags you or assigns you work.', icon: 'logo.png' }); } catch (e) { /* ignore */ } }
+    else toast('Desktop popups are blocked. Click the 🔒 icon next to the address bar to allow notifications.', 'warn', { timeout: 9000 });
+    if (!$('#notifPop').hidden) renderNotifications();
+  }
+  function maybeAskDesktop() {
+    if (!desktopSupported() || Notification.permission !== 'default' || store.get('hib-desktop-asked', 0)) return;
+    const el = document.createElement('div');
+    el.className = 'popup-card desktop-prompt';
+    el.innerHTML = `<img src="logo.png" alt="" class="popup-logo"><div class="popup-body"><b>Get a popup on your computer</b><p>See a desktop notification when someone tags you, assigns you a task or reports an issue — even when this tab is in the background.</p><div class="row mt-8"><button class="btn btn-sm btn-primary" data-on>Turn on</button><button class="btn btn-sm btn-ghost" data-off>Not now</button></div></div>`;
+    el.querySelector('[data-on]').onclick = enableDesktop;
+    el.querySelector('[data-off]').onclick = () => { store.set('hib-desktop-asked', 1); el.remove(); };
+    $('#popups').appendChild(el);
+  }
 
   function applyData(d) {
     S.rev = d.rev;
@@ -462,7 +523,7 @@
     if (!S.saving) setSync('busy', 'Syncing…');
     try {
       const d = await api('sync', { rev: force ? null : S.rev });
-      if (d.changed) { applyData(d); rerender(); }
+      if (d.changed) { applyData(d); rerender(); checkNewNotifications(false); }
       S.lastSync = Date.now(); S.syncFails = 0;
       if (!S.saving) setSync('ok', syncIdleText());
       $('#banner').classList.contains('err') && updateBanner();
@@ -517,6 +578,7 @@
     route(true);
     startPolling();
     setTimeout(askTeam, 400);
+    setTimeout(maybeAskDesktop, 2500);
   }
 
   function updateBanner(errorText) {
@@ -533,7 +595,8 @@
   function updateChrome() {
     const s = S.data.settings;
     $('#brandOrg').textContent = s.ORG_NAME || 'Healthcare';
-    document.title = s.APP_NAME || 'Healthcare Initiatives Board';
+    const unreadN = S.data.notifications.filter((n) => !n.Read).length;
+    document.title = (unreadN ? '(' + unreadN + ') ' : '') + (s.APP_NAME || 'Healthcare Initiatives Board');
     $('#meBtn').innerHTML = avatar(S.me.email);
     const unread = S.data.notifications.filter((n) => !n.Read).length;
     const bc = $('#bellCount');
@@ -702,7 +765,7 @@
       .map((r) => Object.assign(r, { action: `data-action="filterTasks" data-preset='${esc(JSON.stringify({ assignee: r.email }))}'` }));
 
     const overdueList = tasks.filter(isOverdue).sort((a, b) => a.DueDate.localeCompare(b.DueDate)).slice(0, 8);
-    const attention = tasks.filter((t) => t.Status === 'Blocked' || t.Status === 'Under Review' || (OPEN(t.Status) && openDeps(t).length))
+    const attention = tasks.filter((t) => t.Status === 'Blocked' || t.Status === 'Under Review' || (OPEN(t.Status) && (openDeps(t).length || (S.data.commentStats[t.TaskID] || {}).openIssues)))
       .sort((a, b) => PRIORITIES.indexOf(a.Priority) - PRIORITIES.indexOf(b.Priority)).slice(0, 8);
     const inis = S.data.initiatives.filter((i) => !i.Archived && (!f.initiative || i.InitiativeID === f.initiative))
       .map((i) => Object.assign({ i }, initiativeStats(i.InitiativeID))).sort((a, b) => STAGES.indexOf(a.i.Stage) - STAGES.indexOf(b.i.Stage) || b.pct - a.pct);
@@ -758,7 +821,7 @@
     </div>
     <div class="grid grid-2 mt-16">
       <div class="card"><div class="card-head"><h3>Blocked &amp; awaiting feedback</h3><span class="sub">${attention.length}</span></div>
-        <div class="card-body flush">${attention.length ? `<div class="list">${attention.map((t) => { const deps = openDeps(t); return `<div class="list-item" data-action="openTask" data-id="${esc(t.TaskID)}">${avatar(t.AssignedTo, 'sm')}<div class="grow"><span class="t">${esc(t.Title)}</span><span class="s">${esc(t.TaskID)} · ${t.Status === 'Under Review' ? 'Awaiting review / feedback' : t.Status === 'Blocked' ? 'Blocked' : 'Waiting on ' + deps.map((d) => d.TaskID).join(', ')}</span></div>${statusBadge(t.Status)}</div>`; }).join('')}</div>` : emptyState('check', 'Nothing blocked', 'No tasks are blocked or waiting for feedback.')}</div></div>
+        <div class="card-body flush">${attention.length ? `<div class="list">${attention.map((t) => { const deps = openDeps(t); return `<div class="list-item" data-action="openTask" data-id="${esc(t.TaskID)}">${avatar(t.AssignedTo, 'sm')}<div class="grow"><span class="t">${esc(t.Title)}</span><span class="s">${esc(t.TaskID)} · ${(S.data.commentStats[t.TaskID] || {}).openIssues ? '⚠ Issue reported — needs help' : t.Status === 'Under Review' ? 'Awaiting review / feedback' : t.Status === 'Blocked' ? 'Blocked' : 'Waiting on ' + deps.map((d) => d.TaskID).join(', ')}</span></div>${statusBadge(t.Status)}</div>`; }).join('')}</div>` : emptyState('check', 'Nothing blocked', 'No tasks are blocked or waiting for feedback.')}</div></div>
       <div class="card"><div class="card-head"><h3>Recent activity</h3><div class="actions"><a class="btn btn-sm btn-ghost" href="#/activity">View all</a></div></div>
         <div class="card-body flush">${feedHtml(S.data.activity.slice(0, 7))}</div></div>
     </div>`;
@@ -1283,6 +1346,8 @@
         ${fld('DEFAULT_ROLE', 'Default role for new users', 'Applied on auto-provisioning.', 'role')}${fld('SESSION_HOURS', 'Session length (hours)', 'Between 1 and 6.')}
         ${fld('TIMEZONE', 'Time zone', 'IANA name, e.g. Asia/Dubai.')}${fld('POLL_SECONDS', 'Refresh interval (seconds)', 'How often browsers check for team changes (min 15).')}
         ${fld('DUE_SOON_DAYS', 'Due-soon reminder (days)', 'Days before the due date for reminders.')}${fld('STAGE_CAPS', 'Stage caps', 'e.g. Live=8, Build=8, Under Design=8')}
+        ${fld('EMAIL_ENABLED', 'Send email notifications', 'TRUE sends emails for the types below.', 'bool')}${fld('BOARD_URL', 'Board link (for emails)', 'Your GitHub Pages address.')}
+        ${fld('EMAIL_TYPES', 'Emailed notification types', 'MENTION, ASSIGNED, ISSUE, NOTE, NOT_STARTED, OVERDUE (also: REPLY, COMMENT, DUE_SOON, BLOCKED, COMPLETED, RESOLVED)', 'area')}
         ${fld('CATEGORIES', 'Categories / departments', 'Comma-separated list.', 'area')}${fld('FORUMS', 'Review forums / meetings', 'Comma-separated list.', 'area')}${fld('DEPARTMENTS', 'Departments (for users)', 'Comma-separated list.', 'area')}
         </div><div class="alert alert-blue mt-16">${icon('lock')}<div>For security, <b>AUTH_MODE</b> (currently <b>${esc(s.AUTH_MODE)}</b>) and <b>GOOGLE_CLIENT_ID</b> can only be changed directly in the Settings sheet by the spreadsheet owner.</div></div>
         <div class="row end mt-16"><button class="btn btn-primary" data-action="saveConfig">Save configuration</button></div></div></div>`;
@@ -1471,6 +1536,8 @@
     const alerts = [];
     if (isOverdue(t)) alerts.push(`<div class="alert alert-red">${icon('alert')}<div>Overdue by ${plural(daysBetween(t.DueDate, today()), 'day')} — due ${fmtDate(t.DueDate, true)}.</div></div>`);
     if (t.Status === 'Blocked') alerts.push(`<div class="alert alert-red">${icon('alert')}<div>This task is <b>blocked</b>. Use the discussion to record what is needed to unblock it.</div></div>`);
+    const oi = (S.data.commentStats[t.TaskID] || {}).openIssues || 0;
+    if (oi) alerts.push(`<div class="alert alert-red">${icon('alert')}<div><b>${plural(oi, 'open issue')}</b> reported on this task. <a href="javascript:void 0" data-action="drawerTab" data-tab="discussion">See discussion</a></div></div>`);
     if (t.Status === 'Under Review') alerts.push(`<div class="alert alert-amber">${icon('clock')}<div>Awaiting review / feedback.</div></div>`);
     if (openD.length && OPEN(t.Status)) alerts.push(`<div class="alert alert-amber">${icon('link')}<div>Waiting on ${openD.map((d) => `<a href="javascript:void 0" data-action="openTask" data-id="${esc(d.TaskID)}">${esc(d.TaskID)}</a>`).join(', ')} to be completed.</div></div>`);
     return `${alerts.join('')}
@@ -1498,11 +1565,19 @@
     return `<div class="card">${feedHtml(dr.detail ? dr.detail.activity : [])}</div>`;
   }
 
+  const KINDS = {
+    comment: { label: 'Comment', icon: 'chat', button: 'Post comment', placeholder: 'Add a comment or feedback… Type @ to tag someone (Ctrl+Enter to post)', hint: 'Type <b>@</b> to tag a teammate — they get a popup and notification.' },
+    issue: { label: 'Report issue', icon: 'alert', button: 'Report issue', placeholder: 'What is blocking you? What help do you need? Type @ to tag someone who can help.', hint: 'Your team\'s managers and admins are notified (popup + email).' },
+    note: { label: 'Note / instruction', icon: 'edit', button: 'Add note', placeholder: 'Add a note, guidance or instruction for the assignee… Type @ to tag someone.', hint: 'The assignee and collaborators are notified (popup + email).' }
+  };
   function drawerDiscussion(t) {
     const dr = S.drawer;
     const draft = S.drafts['c:' + t.TaskID] || '';
-    const composer = `<div class="composer"><textarea id="newComment" data-input="draft" data-key="c:${esc(t.TaskID)}" placeholder="Add a comment or feedback… Type @ to tag someone (Ctrl+Enter to post)" aria-label="New comment" maxlength="4000">${esc(draft)}</textarea>
-      <div class="bar"><span class="hint">Type <b>@</b> to tag a teammate — they get notified. No patient information.</span><div class="btns"><button class="btn btn-primary btn-sm" data-action="postComment" data-task="${esc(t.TaskID)}">Post comment</button></div></div></div>`;
+    const kind = dr.kind || 'comment';
+    const K = KINDS[kind];
+    const composer = `<div class="kind-tabs" role="radiogroup" aria-label="Type of message">${Object.keys(KINDS).map((k) => `<button role="radio" aria-checked="${k === kind}" class="kind-tab k-${k} ${k === kind ? 'on' : ''}" data-action="setKind" data-kind="${k}">${icon(KINDS[k].icon, 'ic-sm')}${KINDS[k].label}</button>`).join('')}</div>
+      <div class="composer k-${kind}"><textarea id="newComment" data-input="draft" data-key="c:${esc(t.TaskID)}" placeholder="${esc(K.placeholder)}" aria-label="${esc(K.label)}" maxlength="4000">${esc(draft)}</textarea>
+      <div class="bar"><span class="hint">${K.hint}</span><div class="btns"><button class="btn ${kind === 'issue' ? 'btn-danger' : 'btn-primary'} btn-sm" data-action="postComment" data-task="${esc(t.TaskID)}">${esc(K.button)}</button></div></div></div>`;
     if (dr.loading && !dr.detail) return composer + '<div class="loading-row"><div class="spinner dark sm"></div>Loading discussion…</div>';
     const comments = dr.detail ? dr.detail.comments : [];
     const byParent = {};
@@ -1523,10 +1598,14 @@
       const body = c.Status === 'deleted' ? '<div class="cmt-body deleted">This comment was deleted.</div>'
         : editing ? `<div class="composer inline-composer"><textarea id="edit-${esc(c.CommentID)}" aria-label="Edit comment" maxlength="4000">${esc(c.Body)}</textarea><div class="bar"><div class="btns"><button class="btn btn-sm" data-action="cancelEdit">Cancel</button><button class="btn btn-primary btn-sm" data-action="saveEdit" data-id="${esc(c.CommentID)}">Save</button></div></div></div>`
           : `<div class="cmt-body">${richText(c.Body)}</div>`;
-      const actions = c.Status === 'deleted' || editing ? '' : `<div class="cmt-actions"><button data-action="replyTo" data-id="${esc(c.CommentID)}">${icon('reply', 'ic-sm')}Reply</button>${mine ? `<button data-action="editComment" data-id="${esc(c.CommentID)}">${icon('edit', 'ic-sm')}Edit</button>` : ''}${mine || isAdmin() ? `<button data-action="deleteComment" data-id="${esc(c.CommentID)}">${icon('trash', 'ic-sm')}Delete</button>` : ''}</div>`;
-      const reply = dr.replyTo === c.CommentID ? `<div class="composer inline-composer"><textarea id="reply-${esc(c.CommentID)}" data-input="draft" data-key="${esc(replyDraftKey)}" placeholder="Reply to ${esc(c.AuthorName)}…" aria-label="Reply" maxlength="4000">${esc(S.drafts[replyDraftKey] || '')}</textarea><div class="bar"><span class="hint">Ctrl+Enter to send</span><div class="btns"><button class="btn btn-sm" data-action="cancelReply">Cancel</button><button class="btn btn-primary btn-sm" data-action="postReply" data-id="${esc(c.CommentID)}" data-task="${esc(t.TaskID)}">Reply</button></div></div></div>` : '';
+      const kindTag = c.Kind === 'issue' ? (c.Resolved ? `<span class="kind-tag k-resolved">${icon('check', 'ic-sm')}Issue resolved</span>` : `<span class="kind-tag k-issue">${icon('alert', 'ic-sm')}Issue</span>`) : c.Kind === 'note' ? `<span class="kind-tag k-note">${icon('edit', 'ic-sm')}Note / instruction</span>` : '';
+      const canResolve = c.Kind === 'issue' && c.Status !== 'deleted' && (isManager() || mine || t.AssignedTo === S.me.email || t.CreatedBy === S.me.email);
+      const resolveBtn = canResolve ? `<button data-action="resolveIssue" data-id="${esc(c.CommentID)}" data-v="${c.Resolved ? '0' : '1'}">${icon(c.Resolved ? 'refresh' : 'check', 'ic-sm')}${c.Resolved ? 'Reopen issue' : 'Mark resolved'}</button>` : '';
+      const actions = c.Status === 'deleted' || editing ? '' : `<div class="cmt-actions"><button data-action="replyTo" data-id="${esc(c.CommentID)}">${icon('reply', 'ic-sm')}${c.Kind === 'issue' ? 'Help / reply' : 'Reply'}</button>${resolveBtn}${mine ? `<button data-action="editComment" data-id="${esc(c.CommentID)}">${icon('edit', 'ic-sm')}Edit</button>` : ''}${mine || isAdmin() ? `<button data-action="deleteComment" data-id="${esc(c.CommentID)}">${icon('trash', 'ic-sm')}Delete</button>` : ''}</div>`;
+      const reply = dr.replyTo === c.CommentID ? `<div class="composer inline-composer"><textarea id="reply-${esc(c.CommentID)}" data-input="draft" data-key="${esc(replyDraftKey)}" placeholder="${c.Kind === 'issue' ? 'Add guidance or an instruction for ' + esc(c.AuthorName) + '… Type @ to tag someone.' : 'Reply to ' + esc(c.AuthorName) + '… Type @ to tag someone.'}" aria-label="Reply" maxlength="4000">${esc(S.drafts[replyDraftKey] || '')}</textarea><div class="bar"><span class="hint">Ctrl+Enter to send</span><div class="btns"><button class="btn btn-sm" data-action="cancelReply">Cancel</button><button class="btn btn-primary btn-sm" data-action="postReply" data-id="${esc(c.CommentID)}" data-task="${esc(t.TaskID)}">Reply</button></div></div></div>` : '';
       const childHtml = kids.map((k) => renderC(k, depth + 1)).join('');
-      return `<div class="cmt-wrap" data-cid="${esc(c.CommentID)}"><div class="cmt ${isNew ? 'is-new' : ''}">${avatar(c.AuthorEmail)}<div class="cmt-main">
+      return `<div class="cmt-wrap" data-cid="${esc(c.CommentID)}"><div class="cmt ${isNew ? 'is-new' : ''} ${c.Kind === 'issue' ? (c.Resolved ? 'cmt-resolved' : 'cmt-issue') : c.Kind === 'note' ? 'cmt-note' : ''}">${avatar(c.AuthorEmail)}<div class="cmt-main">
+        ${kindTag ? `<div>${kindTag}${c.Resolved && c.ResolvedBy ? `<span class="time"> by ${esc(uname(c.ResolvedBy))} · ${esc(relTime(c.ResolvedAt))}</span>` : ''}</div>` : ''}
         <div class="cmt-head"><b>${esc(c.AuthorName || uname(c.AuthorEmail))}</b><span class="time" title="${esc(fmtDateTime(c.CreatedAt))}">${esc(relTime(c.CreatedAt))}</span>${c.Status === 'edited' ? `<span class="time" title="Edited ${esc(fmtDateTime(c.UpdatedAt))}">· edited</span>` : ''}${isNew ? '<span class="new-tag">New</span>' : ''}</div>
         ${depth >= 3 && parent ? `<div class="reply-to">↪ replying to ${esc(parent.AuthorName)}</div>` : ''}
         ${body}${actions}${reply}</div></div>
@@ -1593,7 +1672,7 @@
     }
   }
 
-  async function postComment(taskId, parentId, textarea, button) {
+  async function postComment(taskId, parentId, textarea, button, kind) {
     const body = textarea.value.trim();
     if (!body) { textarea.focus(); toast('Write something first.', 'warn'); return; }
     if (body.length > 4000) { toast('Comments are limited to 4,000 characters.', 'err'); return; }
@@ -1602,7 +1681,7 @@
     button.innerHTML = '<span class="spinner"></span>Posting…';
     textarea.disabled = true;
     try {
-      const d = await write('addComment', { taskId, parentId: parentId || '', body });
+      const d = await write('addComment', { taskId, parentId: parentId || '', body, kind: kind || 'comment' });
       delete S.drafts[parentId ? 'r:' + parentId : 'c:' + taskId];
       if (S.drawer && S.drawer.id === taskId && S.drawer.detail) {
         S.drawer.detail.comments = d.comments;
@@ -1611,7 +1690,8 @@
         st.count = d.comments.filter((c) => c.Status !== 'deleted').length; st.lastAt = d.comment.CreatedAt; st.lastBy = S.me.email;
         renderDrawer();
       }
-      toast(parentId ? 'Reply posted' : 'Comment posted', 'ok', { timeout: 2000 });
+      toast(kind === 'issue' ? 'Issue reported — your managers have been notified' : kind === 'note' ? 'Note added' : parentId ? 'Reply posted' : 'Comment posted', 'ok', { timeout: 2600 });
+      if (S.drawer) S.drawer.kind = 'comment';
     } catch (e) {
       showError(e, 'Comment not saved');
       textarea.disabled = false; button.disabled = false; button.innerHTML = label;
@@ -1899,9 +1979,10 @@
   function renderNotifications() {
     const ns = S.data.notifications;
     const unread = ns.filter((n) => !n.Read).length;
-    const ic = { MENTION: 'chat', ASSIGNED: 'user', REASSIGNED: 'user', COMMENT: 'chat', REPLY: 'reply', DUE_SOON: 'clock', OVERDUE: 'alert', BLOCKED: 'alert', COMPLETED: 'check' };
+    const ic = { MENTION: 'chat', ISSUE: 'alert', NOTE: 'edit', RESOLVED: 'check', NOT_STARTED: 'clock', ASSIGNED: 'user', REASSIGNED: 'user', COMMENT: 'chat', REPLY: 'reply', DUE_SOON: 'clock', OVERDUE: 'alert', BLOCKED: 'alert', COMPLETED: 'check' };
     $('#notifPop').innerHTML = `<div class="head"><h3>Notifications</h3>${unread ? `<span class="tag">${unread} new</span><button class="btn btn-xs" data-action="markAllRead">Mark all read</button>` : ''}</div>
-      <div class="notif-list">${ns.length ? ns.map((n) => `<div class="notif ${n.Read ? '' : 'unread'}" data-action="openNotification" data-id="${esc(n.NotificationID)}"><span class="udot"></span><span class="feed-ic ${n.Type === 'OVERDUE' || n.Type === 'BLOCKED' ? 'red' : n.Type === 'COMPLETED' ? 'green' : n.Type === 'DUE_SOON' ? 'amber' : ''}">${icon(ic[n.Type] || 'bell')}</span>
+      ${desktopSupported() && Notification.permission !== 'granted' ? `<div class="notif-desktop">${icon('bell', 'ic-sm')}<span>${Notification.permission === 'denied' ? 'Desktop popups are blocked in this browser (allow via the 🔒 icon in the address bar).' : 'Get desktop popups for tags and new tasks.'}</span>${Notification.permission === 'default' ? '<button class="btn btn-xs btn-primary" data-action="enableDesktop">Turn on</button>' : ''}</div>` : ''}
+      <div class="notif-list">${ns.length ? ns.map((n) => `<div class="notif ${n.Read ? '' : 'unread'}" data-action="openNotification" data-id="${esc(n.NotificationID)}"><span class="udot"></span><span class="feed-ic ${/OVERDUE|BLOCKED|ISSUE/.test(n.Type) ? 'red' : /COMPLETED|RESOLVED/.test(n.Type) ? 'green' : /DUE_SOON|NOT_STARTED/.test(n.Type) ? 'amber' : /MENTION|NOTE/.test(n.Type) ? 'teal' : ''}">${icon(ic[n.Type] || 'bell')}</span>
         <div style="min-width:0"><div class="msg">${esc(n.Message)}</div><div class="time">${esc(relTime(n.CreatedAt))}</div></div></div>`).join('') : emptyState('bell', 'You are all caught up', 'Assignments, comments, replies and deadlines will show up here.')}</div>`;
   }
   async function markRead(ids, all) {
@@ -1998,8 +2079,14 @@
       } catch (e) { showError(e, 'Not deleted'); }
     },
     copyLink: (el) => { const url = location.href.split('#')[0] + '#/tasks?task=' + encodeURIComponent(el.dataset.id); (navigator.clipboard ? navigator.clipboard.writeText(url) : Promise.reject()).then(() => toast('Link copied')).catch(() => toast(url, 'warn', { timeout: 8000 })); },
-    postComment: (el) => postComment(el.dataset.task, '', $('#newComment'), el),
-    postReply: (el) => postComment(el.dataset.task, el.dataset.id, $('#reply-' + CSS.escape(el.dataset.id)), el),
+    postComment: (el) => postComment(el.dataset.task, '', $('#newComment'), el, (S.drawer && S.drawer.kind) || 'comment'),
+    postReply: (el) => { const parent = S.drawer && S.drawer.detail && S.drawer.detail.comments.find((c) => c.CommentID === el.dataset.id); postComment(el.dataset.task, el.dataset.id, $('#reply-' + CSS.escape(el.dataset.id)), el, parent && parent.Kind === 'issue' ? 'note' : 'comment'); },
+    setKind: (el) => { S.drawer.kind = el.dataset.kind; const ta = $('#newComment'); const v = ta ? ta.value : ''; renderDrawer(); const n = $('#newComment'); if (n) { n.value = v; n.focus(); } },
+    resolveIssue: async (el) => {
+      el.disabled = true;
+      try { const d = await write('resolveIssue', { id: el.dataset.id, resolved: el.dataset.v === '1' }); S.drawer.detail.comments = d.comments; renderDrawer(); toast(el.dataset.v === '1' ? 'Issue marked resolved' : 'Issue reopened'); }
+      catch (e) { el.disabled = false; showError(e, 'Not saved'); }
+    },
     replyTo: (el) => { S.drawer.replyTo = el.dataset.id; S.drawer.editId = null; renderDrawer(); const ta = $('#reply-' + CSS.escape(el.dataset.id)); if (ta) ta.focus(); },
     cancelReply: () => { S.drawer.replyTo = null; renderDrawer(); },
     editComment: (el) => { S.drawer.editId = el.dataset.id; S.drawer.replyTo = null; renderDrawer(); const ta = $('#edit-' + CSS.escape(el.dataset.id)); if (ta) { ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); } },
@@ -2074,12 +2161,13 @@
     toggleNotifications: () => { const p = $('#notifPop'); hidePopovers('#notifPop'); p.hidden = !p.hidden; if (!p.hidden) renderNotifications(); },
     toggleUserMenu: () => { const p = $('#userPop'); hidePopovers('#userPop'); p.hidden = !p.hidden; if (!p.hidden) renderUserMenu(); },
     markAllRead: () => markRead([], true),
+    enableDesktop: () => enableDesktop(),
     openNotification: (el) => {
       const n = S.data.notifications.find((x) => x.NotificationID === el.dataset.id);
       hidePopovers();
       if (!n) return;
       if (!n.Read) markRead([n.NotificationID]);
-      if (n.EntityType === 'Task') navTask(n.EntityID, n.Type === 'COMMENT' || n.Type === 'REPLY' || n.Type === 'MENTION' ? 'discussion' : 'details');
+      if (n.EntityType === 'Task') navTask(n.EntityID, /COMMENT|REPLY|MENTION|ISSUE|NOTE|RESOLVED/.test(n.Type) ? 'discussion' : 'details');
     },
     signOut: () => { hidePopovers(); signOut(); },
     retryLogin: () => showLogin()
