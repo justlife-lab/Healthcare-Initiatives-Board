@@ -267,7 +267,10 @@
     const req = { action, payload: payload || {}, token: S.token };
     let res = null;
     if (!CFG.API_URL) throw new ApiError('CONFIG', 'The board is not connected yet: add your Apps Script web-app URL to API_URL in config.js.');
-    {
+    if (useJsonp()) {
+      try { res = await jsonp(req); }
+      catch (e) { throw new ApiError('NETWORK', e.message); }
+    } else {
       const tries = READ_ACTIONS.has(action) ? 3 : 1;
       let lastErr;
       for (let i = 0; i < tries && !res; i++) {
@@ -282,6 +285,10 @@
           if (i < tries - 1) await sleep(700 * (i + 1));
         }
       }
+      if (!res && lastErr && /fetch|network|load/i.test(lastErr.message)) {
+        // Browser blocked the cross-site call (deployment limited to the company domain) → switch to the script-tag transport.
+        try { res = await jsonp(req); S.transport = 'jsonp'; store.set('hib-transport', 'jsonp'); } catch (e) { lastErr = e; }
+      }
       if (!res) throw new ApiError('NETWORK', 'Could not reach the server (' + (lastErr ? lastErr.message : 'network error') + '). Check your connection and try again.');
     }
     if (!res.ok) {
@@ -294,6 +301,23 @@
       throw err;
     }
     return res.data;
+  }
+
+  /* Transport for web apps deployed as "Anyone within <domain>" (URL contains /a/macros/<domain>/):
+   * the request is sent as a <script> GET, which carries the user's Google login and needs no CORS. */
+  function useJsonp() { return S.transport === 'jsonp' || /\/a\/macros\//.test(CFG.API_URL) || store.get('hib-transport', '') === 'jsonp'; }
+  let jsonpSeq = 0;
+  function jsonp(req) {
+    return new Promise((resolve, reject) => {
+      const cb = '__hib' + Date.now().toString(36) + (jsonpSeq++);
+      const el = document.createElement('script');
+      const timer = setTimeout(() => { done(); reject(new Error('The server did not answer in time.')); }, 45000);
+      function done() { clearTimeout(timer); try { delete window[cb]; } catch (e) { window[cb] = undefined; } el.remove(); }
+      window[cb] = (data) => { done(); resolve(data); };
+      el.onerror = () => { done(); reject(new Error('Could not load the board backend. Make sure you are signed in to your company Google account in this browser (open gmail.com to check), then try again.')); };
+      el.src = CFG.API_URL + (CFG.API_URL.includes('?') ? '&' : '?') + 'callback=' + cb + '&p=' + encodeURIComponent(JSON.stringify(req));
+      document.head.appendChild(el);
+    });
   }
 
   /** Writes: shows saving state, triggers a background sync afterwards. */
@@ -1332,7 +1356,7 @@
         ${us.map((u) => `<tr style="cursor:default" data-email="${esc(u.Email)}"><td>${person(u.Email)}${u.Title ? `<div class="muted" style="font-size:11.5px;margin-left:30px">${esc(u.Title)}</div>` : ''}</td><td style="font-size:12.5px">${esc(u.Email)}</td>
           <td>${isAdmin() ? `<select class="select select-sm" style="width:118px" data-change="userRole" data-email="${esc(u.Email)}" aria-label="Role of ${esc(u.Name)}">${opts(ROLES, u.Role)}</select>` : `<span class="tag">${esc(u.Role)}</span>`}</td>
           <td>${esc(u.Department || '—')}</td><td>${u.Active ? presenceBadge(u) : '<span class="badge st-not-started">Deactivated</span>'}</td><td class="muted">${u.LastSeen || u.LastLogin ? esc(relTime(u.LastSeen || u.LastLogin)) : 'Never'}</td>
-          <td class="row-actions">${canManageUser(u) ? `<button class="btn btn-xs" data-action="editUser" data-email="${esc(u.Email)}">Edit</button>` : ''}</td></tr>`).join('')}
+          <td class="row-actions">${canManageUser(u) ? `<button class="btn btn-xs" data-action="editUser" data-email="${esc(u.Email)}">Edit</button>` : ''}${isAdmin() && u.Email !== S.me.email ? ` <button class="icon-btn sm danger-btn" data-action="deleteUser" data-email="${esc(u.Email)}" title="Delete user" aria-label="Delete ${esc(u.Name)}">${icon('trash', 'ic-sm')}</button>` : ''}</td></tr>`).join('')}
         </tbody></table></div></div>
         <p class="muted mt-8" style="font-size:12px">Users from <b>${esc(S.data.settings.ALLOWED_DOMAINS || '—')}</b> ${String(S.data.settings.AUTO_PROVISION).toUpperCase() === 'TRUE' ? 'are added automatically as ' + esc(S.data.settings.DEFAULT_ROLE) + ' on first Google sign-in' : 'must be added here before they can sign in'}. When someone signs in with Google for the first time, their profile is <b>activated</b> automatically: their company name and photo are picked up, and if a profile with the same first name was waiting for them (e.g. "Nitish"), it is linked to their real email so their tasks stay with them. Deactivate users instead of deleting them so their history stays intact.</p>`;
     } else if (t === 'import') {
@@ -1407,6 +1431,15 @@
     if (!mapping.includes('Title')) { mapping = grid[0].map((_, i) => DEFAULT_ORDER[i] || ''); body = grid; }
     const rows = body.map((r) => { const o = {}; mapping.forEach((k, i) => { if (k && r[i] !== undefined && !o[k]) o[k] = r[i]; }); return o; }).filter((o) => o.Title);
     return { rows, mapping };
+  }
+  async function importChunks(rows, dryRun) {
+    const size = 20, out = { dryRun, total: 0, importable: 0, imported: 0, results: [] };
+    for (let i = 0; i < rows.length; i += size) {
+      const r = dryRun ? await api('importTasks', { rows: rows.slice(i, i + size), dryRun: true }) : await write('importTasks', { rows: rows.slice(i, i + size) });
+      out.total += r.total; out.importable += r.importable; out.imported += r.imported;
+      r.results.forEach((x) => { x.row += i; out.results.push(x); });
+    }
+    return out;
   }
   function importPanel() {
     const st = S.importState || (S.importState = { text: '', preview: null });
@@ -2110,14 +2143,14 @@
       const { rows } = mapImport(text);
       if (!rows.length) return toast('No rows with a Title found. Paste rows including a header line.', 'warn');
       el.disabled = true;
-      try { S.importState.preview = await api('importTasks', { rows, dryRun: true }); renderView(); }
+      try { S.importState.preview = await importChunks(rows, true); renderView(); }
       catch (e) { showError(e, 'Preview failed'); } finally { el.disabled = false; }
     },
     importRun: async (el) => {
       const { rows } = mapImport(S.importState.text);
       if (!(await confirmDialog({ title: 'Import tasks?', message: `${S.importState.preview.importable} tasks will be created in Google Sheets and assignees will be notified.`, confirmText: 'Import' }))) return;
       el.disabled = true; el.innerHTML = '<span class="spinner"></span>Importing…';
-      try { const r = await write('importTasks', { rows }); S.importState.preview = r; S.importState.text = ''; toast(`${r.imported} tasks imported`); renderView(); }
+      try { const r = await importChunks(rows, false); S.importState.preview = r; S.importState.text = ''; toast(`${r.imported} tasks imported`); renderView(); }
       catch (e) { el.disabled = false; showError(e, 'Import failed'); }
     },
     ownerChip: (el) => { const p = JSON.parse(el.dataset.preset); const f = S.filters.all; const same = f.team === p.team && (f.assignee || '') === (p.assignee || ''); Object.assign(f, { team: same ? '' : p.team, assignee: same ? '' : (p.assignee || ''), page: 1 }); renderView(); },
@@ -2147,6 +2180,13 @@
     actTab: (el) => { S.filters.act.tab = el.dataset.tab; renderView(); },
     settingsTab: (el) => { S.filters.settingsTab = el.dataset.tab; if (S.route.view === 'settings') renderView(); else go('#/settings'); hidePopovers(); },
     newUser: () => openUserForm(null),
+    deleteUser: async (el) => {
+      const u = user(el.dataset.email);
+      const n = S.data.tasks.filter((t) => t.AssignedTo === u.Email && !t.Archived).length;
+      if (!(await confirmDialog({ title: `Delete ${u.Name}?`, message: `${u.Email} will be removed from the board and can no longer sign in${n ? `. Their ${plural(n, 'task')} will become TBD (unassigned)` : ''}. Comments and history are kept.`, confirmText: 'Delete user', danger: true }))) return;
+      try { const r = await write('deleteUser', { email: u.Email }); S.data.users = S.data.users.filter((x) => x.Email !== u.Email); delete S.userMap[u.Email]; rerender(); toast(`${u.Name} deleted${r.unassigned ? ` · ${r.unassigned} tasks now TBD` : ''}`); }
+      catch (e) { showError(e, 'Not deleted'); }
+    },
     editUser: (el) => openUserForm(user(el.dataset.email)),
     saveConfig: async (el) => {
       const values = {};
