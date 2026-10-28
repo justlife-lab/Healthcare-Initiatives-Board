@@ -1453,11 +1453,11 @@
       <p class="muted">Include a header row. Recognised columns: <b>Title</b>, <b>Owner</b> (name or email — blank or "TBD" = unassigned), <b>Team</b> (${esc(settingList('DEPARTMENTS').join(' / '))}), <b>Status</b>, <b>Priority</b>, <b>Due date</b>, Start date, Initiative, Category, Description, Progress, Links.
       Without a header the order is assumed to be: Title, Owner, Team, Status, Priority, Due date, Initiative, Description.</p>
       <textarea class="textarea mt-8" id="importText" rows="9" placeholder="Title&#9;Owner&#9;Team&#9;Status&#9;Priority&#9;Due date&#10;Hospital partnership — Mediclinic&#9;Nitish&#9;BD&#9;In progress&#9;High&#9;2026-11-15&#10;Q4 campaign brief&#9;Yana&#9;Marketing&#9;Not started&#9;Medium&#9;30/11/2026" data-input="importText">${esc(st.text)}</textarea>
-      <div class="row mt-8"><button class="btn" data-action="importPreview">${icon('search')}Preview</button>${p && p.importable ? `<button class="btn btn-primary" data-action="importRun">${icon('download')}Import ${p.importable} task${p.importable === 1 ? '' : 's'}</button>` : ''}<span class="muted" style="font-size:12px">Nothing is saved until you click Import. Duplicate titles for the same owner are skipped.</span></div>
+      <div class="row mt-8"><button class="btn" data-action="importPreview">${icon('search')}Preview</button>${p && p.importable ? `<button class="btn btn-primary" data-action="importRun">${icon('download')}Import / update ${p.importable} task${p.importable === 1 ? '' : 's'}</button>` : ''}<span class="muted" style="font-size:12px">Nothing is saved until you click Import. Duplicate titles for the same owner are skipped.</span></div>
       ${p ? `<div class="mt-16 table-wrap"><table class="tbl"><thead><tr><th>#</th><th>Title</th><th>Owner</th><th>Team</th><th>Status</th><th>Priority</th><th>Due</th><th>Initiative</th><th>Notes</th></tr></thead><tbody>
-        ${p.results.map((r) => `<tr style="cursor:default" class="${r.ok ? '' : 'overdue'}"><td class="muted">${r.row}</td><td class="title-cell"><span class="t">${esc(r.task.Title)}</span>${r.task.TaskID ? `<span class="s">${esc(r.task.TaskID)}</span>` : ''}</td><td>${person(r.task.AssignedTo)}</td><td>${esc(r.task.Team || '—')}</td><td>${statusBadge(r.task.Status)}</td><td>${prioBadge(r.task.Priority)}</td><td>${fmtDate(r.task.DueDate)}</td><td>${esc(r.task.Initiative || '—')}</td>
-        <td style="font-size:12px">${r.ok ? '' : `<span class="due-overdue">${esc(r.error)}</span><br>`}${r.warnings.map((w) => `<span class="muted">${esc(w)}</span>`).join('<br>')}</td></tr>`).join('')}
-        </tbody></table></div><p class="mt-8 muted">${p.dryRun ? `${p.importable} of ${p.total} rows ready to import.` : `<b>${p.imported} tasks imported.</b>`}</p>` : ''}
+        ${p.results.map((r) => `<tr style="cursor:default" class="${r.ok || r.update ? '' : 'overdue'}"><td class="muted">${r.row}</td><td class="title-cell"><span class="t">${esc(r.task.Title)}</span>${r.task.TaskID ? `<span class="s">${esc(r.task.TaskID)}</span>` : ''}</td><td>${person(r.task.AssignedTo)}</td><td>${esc(r.task.Team || '—')}</td><td>${statusBadge(r.task.Status)}</td><td>${prioBadge(r.task.Priority)}</td><td>${fmtDate(r.task.DueDate)}</td><td>${esc(r.task.Initiative || '—')}</td>
+        <td style="font-size:12px">${r.ok ? '' : `<span class="${r.update ? 'muted' : 'due-overdue'}">${esc(r.error)}</span><br>`}${r.warnings.map((w) => `<span class="muted">${esc(w)}</span>`).join('<br>')}</td></tr>`).join('')}
+        </tbody></table></div><p class="mt-8 muted">${p.dryRun ? `${p.importable} of ${p.total} rows ready to import.` : `<b>${p.imported} tasks imported${p.updated ? `, ${p.updated} existing tasks updated` : ''}.</b>`}</p>` : ''}
     </div></div>`;
   }
 
@@ -2235,7 +2235,7 @@
       const { rows } = mapImport(S.importState.text);
       if (!(await confirmDialog({ title: 'Import tasks?', message: `${S.importState.preview.importable} tasks will be created in Google Sheets and assignees will be notified.`, confirmText: 'Import' }))) return;
       el.disabled = true; el.innerHTML = '<span class="spinner"></span>Importing…';
-      try { const r = await importChunks(rows, false); S.importState.preview = r; S.importState.text = ''; toast(`${r.imported} tasks imported`); renderView(); }
+      try { const r = await importChunks(rows, false); S.importState.preview = r; S.importState.text = ''; toast(`${r.imported} imported${r.updated ? `, ${r.updated} updated` : ''}`); renderView(); }
       catch (e) { el.disabled = false; showError(e, 'Import failed'); }
     },
     ownerChip: (el) => { const p = JSON.parse(el.dataset.preset); const f = S.filters.all; const same = f.team === p.team && (f.assignee || '') === (p.assignee || ''); Object.assign(f, { team: same ? '' : p.team, assignee: same ? '' : (p.assignee || ''), page: 1 }); renderView(); },
