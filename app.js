@@ -21,7 +21,7 @@
   const READ_ACTIONS = new Set(['bootstrap', 'sync', 'getTask', 'getActivity', 'ping', 'config']);
   const AUTH_ERRORS = new Set(['AUTH_EXPIRED', 'AUTH_REQUIRED', 'UNAUTHORIZED', 'AUTH_INVALID']);
   const PAGE_SIZES = [25, 50, 100];
-  const VERSION = '1.7.0'; // must match CONFIG.APP_VERSION in Code.gs
+  const VERSION = '1.8.0'; // must match CONFIG.APP_VERSION in Code.gs
 
   const defaultTaskFilter = () => ({ q: '', meeting: '', team: '', status: '', priority: '', assignee: '', initiative: '', project: '', category: '', due: '', archived: false, sort: 'DueDate', dir: 1, page: 1, size: 25 });
 
@@ -1415,7 +1415,9 @@
     StartDate: ['start', 'start date', 'started'],
     Initiative: ['initiative', 'project', 'workstream', 'program'],
     Category: ['category', 'type', 'area'],
-    Description: ['description', 'notes', 'details', 'comment', 'comments', 'update', 'latest update'],
+    Description: ['description', 'notes', 'details', 'comment', 'comments', 'next step', 'next steps'],
+    Collaborators: ['support', 'collaborators', 'supporting', 'helpers'],
+    Update: ['update', 'latest update', 'status update'],
     Progress: ['progress', '%', 'percent', '% complete'],
     Links: ['link', 'links', 'url', 'doc']
   };
@@ -1441,7 +1443,7 @@
     let mapping = head.map((h) => Object.keys(IMPORT_COLS).find((k) => IMPORT_COLS[k].includes(h)) || '');
     let body = grid.slice(1);
     if (!mapping.includes('Title')) { mapping = grid[0].map((_, i) => DEFAULT_ORDER[i] || ''); body = grid; }
-    const rows = body.map((r) => { const o = {}; mapping.forEach((k, i) => { if (k && r[i] !== undefined && !o[k]) o[k] = r[i]; }); return o; }).filter((o) => o.Title);
+    const rows = body.map((r) => { const o = {}; mapping.forEach((k, i) => { if (k && r[i] !== undefined && !o[k]) o[k] = r[i]; }); if (o.Update) { o.Description = (o.Description ? o.Description + '\n' : '') + 'Latest update: ' + o.Update; delete o.Update; } if (o.Description) o.Description = o.Description.split(' | ').join('\n'); return o; }).filter((o) => o.Title);
     return { rows, mapping };
   }
   async function importChunks(rows, dryRun) {
@@ -1947,7 +1949,7 @@
       { name: 'Priority', label: 'Priority', type: 'select', required: true, options: PRIORITIES },
       { name: 'Status', label: 'Status', type: 'select', required: true, options: STATUSES },
       { name: 'StartDate', label: 'Start date', type: 'date' },
-      { name: 'DueDate', label: 'Due date', type: 'date', hint: 'Required unless the stage is Parked or Under Design.' },
+      { name: 'DueDate', label: 'Due date', type: 'date', hint: 'Leave blank if there is no deadline yet.' },
       { name: 'Stage', label: 'Stage (meeting board)', type: 'select', options: TASK_STAGES, placeholder: '— Auto from status —' },
       { name: 'Meeting', label: 'Review meeting', type: 'select', options: settingList('FORUMS'), placeholder: '— No meeting —' },
       { name: 'Progress', label: 'Progress (%)', type: 'range', span: true },
@@ -1964,7 +1966,7 @@
         const e = {};
         if (v.Title && v.Title.length < 3) e.Title = 'At least 3 characters.';
         if (v.StartDate && v.DueDate && v.StartDate > v.DueDate) e.DueDate = 'Due date cannot be before the start date.';
-        if (!v.DueDate && !['Parked', 'Under Design', 'Done'].includes(v.Stage) && !['Completed', 'Cancelled'].includes(v.Status)) e.DueDate = 'Due date is required (optional for Parked / Under Design).';
+        if (isNew && !v.DueDate && !['Parked', 'Under Design', 'Done'].includes(v.Stage) && !['Completed', 'Cancelled'].includes(v.Status)) e.DueDate = 'Please set a due date (optional for Parked / Under Design).';
         if (v.Progress !== '' && (v.Progress < 0 || v.Progress > 100)) e.Progress = 'Between 0 and 100.';
         const bad = String(v.Links || '').split('\n').map((l) => l.trim()).filter(Boolean).find((l) => !/^https?:\/\/\S+$/i.test(l));
         if (bad) e.Links = 'Not a valid link: ' + bad.slice(0, 50);
