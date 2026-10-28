@@ -23,7 +23,7 @@
   const PAGE_SIZES = [25, 50, 100];
   const VERSION = '1.0.0';
 
-  const defaultTaskFilter = () => ({ q: '', team: '', status: '', priority: '', assignee: '', initiative: '', project: '', category: '', due: '', archived: false, sort: 'DueDate', dir: 1, page: 1, size: 25 });
+  const defaultTaskFilter = () => ({ q: '', meeting: '', team: '', status: '', priority: '', assignee: '', initiative: '', project: '', category: '', due: '', archived: false, sort: 'DueDate', dir: 1, page: 1, size: 25 });
 
   const S = {
     token: null, expiresAt: null, me: null, rev: null,
@@ -36,6 +36,7 @@
       kanban: { q: '', initiative: '', assignee: '', priority: '' },
       ini: { scope: 'all', group: 'Stage', forum: '', flag: '', q: '' },
       act: { tab: 'discussions', type: '', q: '' },
+      mtg: { mode: 'status', stage: 'Live', meeting: '', q: '' },
       settingsTab: 'profile'
     },
     cal: null, drawer: null, drafts: {}, syncing: false, saving: 0, pollTimer: null, lastSync: 0, syncFails: 0,
@@ -267,7 +268,10 @@
     const req = { action, payload: payload || {}, token: S.token };
     let res = null;
     if (!CFG.API_URL) throw new ApiError('CONFIG', 'The board is not connected yet: add your Apps Script web-app URL to API_URL in config.js.');
-    {
+    if (useJsonp()) {
+      try { res = await jsonp(req); }
+      catch (e) { throw new ApiError('NETWORK', e.message); }
+    } else {
       const tries = READ_ACTIONS.has(action) ? 3 : 1;
       let lastErr;
       for (let i = 0; i < tries && !res; i++) {
@@ -282,6 +286,10 @@
           if (i < tries - 1) await sleep(700 * (i + 1));
         }
       }
+      if (!res && lastErr && /fetch|network|load/i.test(lastErr.message)) {
+        // Browser blocked the cross-site call (deployment limited to the company domain) → switch to the script-tag transport.
+        try { res = await jsonp(req); S.transport = 'jsonp'; store.set('hib-transport', 'jsonp'); } catch (e) { lastErr = e; }
+      }
       if (!res) throw new ApiError('NETWORK', 'Could not reach the server (' + (lastErr ? lastErr.message : 'network error') + '). Check your connection and try again.');
     }
     if (!res.ok) {
@@ -294,6 +302,23 @@
       throw err;
     }
     return res.data;
+  }
+
+  /* Transport for web apps deployed as "Anyone within <domain>" (URL contains /a/macros/<domain>/):
+   * the request is sent as a <script> GET, which carries the user's Google login and needs no CORS. */
+  function useJsonp() { return S.transport === 'jsonp' || /\/a\/macros\//.test(CFG.API_URL) || store.get('hib-transport', '') === 'jsonp'; }
+  let jsonpSeq = 0;
+  function jsonp(req) {
+    return new Promise((resolve, reject) => {
+      const cb = '__hib' + Date.now().toString(36) + (jsonpSeq++);
+      const el = document.createElement('script');
+      const timer = setTimeout(() => { done(); reject(new Error('The server did not answer in time.')); }, 45000);
+      function done() { clearTimeout(timer); try { delete window[cb]; } catch (e) { window[cb] = undefined; } el.remove(); }
+      window[cb] = (data) => { done(); resolve(data); };
+      el.onerror = () => { done(); reject(new Error('Could not load the board backend. Make sure you are signed in to your company Google account in this browser (open gmail.com to check), then try again.')); };
+      el.src = CFG.API_URL + (CFG.API_URL.includes('?') ? '&' : '?') + 'callback=' + cb + '&p=' + encodeURIComponent(JSON.stringify(req));
+      document.head.appendChild(el);
+    });
   }
 
   /** Writes: shows saving state, triggers a background sync afterwards. */
@@ -606,7 +631,7 @@
     if (!$('#notifPop').hidden) renderNotifications();
   }
 
-  const VIEW_TITLES = { dashboard: 'Overview', tasks: 'All tasks', my: 'My tasks', kanban: 'Kanban board', calendar: 'Calendar', initiatives: 'Initiatives', initiative: 'Initiative', projects: 'Projects', project: 'Project', activity: 'Discussions & activity', team: 'Team overview', settings: 'Settings' };
+  const VIEW_TITLES = { meetings: 'Meeting board', dashboard: 'Overview', tasks: 'All tasks', my: 'My tasks', kanban: 'Kanban board', calendar: 'Calendar', initiatives: 'Initiatives', initiative: 'Initiative', projects: 'Projects', project: 'Project', activity: 'Discussions & activity', team: 'Team overview', settings: 'Settings' };
 
   function parseHash() {
     const h = location.hash.replace(/^#\/?/, '');
@@ -847,6 +872,7 @@
       if (f.initiative && t.InitiativeID !== f.initiative) return false;
       if (f.project && t.ProjectID !== f.project) return false;
       if (f.category && t.Category !== f.category) return false;
+      if (f.meeting && (f.meeting === '__none__' ? t.Meeting : t.Meeting !== f.meeting)) return false;
       if (f.due === 'today' && !isDueToday(t)) return false;
       if (f.due === 'week' && !isDueThisWeek(t)) return false;
       if (f.due === 'next7' && !(OPEN(t.Status) && t.DueDate >= t0 && t.DueDate <= addDays(t0, 7))) return false;
@@ -914,7 +940,7 @@
 
   function taskFilterBar(f, scope, opt) {
     opt = opt || {};
-    const any = f.q || f.team || f.status || f.priority || f.assignee || f.initiative || f.project || f.category || f.due || f.archived;
+    const any = f.q || f.meeting || f.team || f.status || f.priority || f.assignee || f.initiative || f.project || f.category || f.due || f.archived;
     return `<div class="filters" role="group" aria-label="Task filters">
       <input class="input grow" type="search" placeholder="Search by title, ID, description or owner…" value="${esc(f.q)}" data-input="taskFilter" data-scope="${scope}" data-key="q" aria-label="Search tasks">
       <select class="select" data-change="taskFilter" data-scope="${scope}" data-key="status" aria-label="Status">${opts([{ v: 'open', l: 'All open' }, { v: 'overdue', l: 'Overdue' }].concat(STATUSES), f.status, 'All statuses')}</select>
@@ -922,6 +948,7 @@
       ${opt.noAssignee ? '' : `<select class="select" data-change="taskFilter" data-scope="${scope}" data-key="assignee" aria-label="Assignee">${assigneeOpts(f.assignee, 'All assignees')}</select>`}
       <select class="select" data-change="taskFilter" data-scope="${scope}" data-key="initiative" aria-label="Initiative">${iniOpts(f.initiative, 'All initiatives')}</select>
       <select class="select" data-change="taskFilter" data-scope="${scope}" data-key="project" aria-label="Project">${prjOpts(f.project, 'All projects', f.initiative)}</select>
+      <select class="select" data-change="taskFilter" data-scope="${scope}" data-key="meeting" aria-label="Meeting">${opts(settingList('FORUMS').concat([{ v: '__none__', l: 'No meeting' }]), f.meeting, 'All meetings')}</select>
       <select class="select" data-change="taskFilter" data-scope="${scope}" data-key="category" aria-label="Category">${opts(settingList('CATEGORIES'), f.category, 'All categories')}</select>
       <select class="select" data-change="taskFilter" data-scope="${scope}" data-key="due" aria-label="Due">${opts([{ v: 'today', l: 'Due today' }, { v: 'week', l: 'Due this week' }, { v: 'next7', l: 'Due in next 7 days' }], f.due, 'Any due date')}</select>
       <label class="check"><input type="checkbox" data-change="taskFilter" data-scope="${scope}" data-key="archived" ${f.archived ? 'checked' : ''}>Show archived</label>
@@ -1370,11 +1397,13 @@
    *  Bulk import (paste from Excel / Google Sheets / old board)
    * ---------------------------------------------------------------- */
   const IMPORT_COLS = {
-    Title: ['title', 'task', 'task name', 'name', 'item', 'subject', 'initiative name'],
+    Title: ['title', 'task', 'task name', 'name', 'item', 'subject', 'initiative name', 'action'],
+    Stage: ['stage', 'board stage', 'phase'],
+    Meeting: ['meeting', 'forum', 'review meeting', 'meetings'],
     Owner: ['owner', 'assignee', 'assigned to', 'assigned', 'person', 'who', 'responsible'],
     Team: ['team', 'department', 'dept', 'function', 'group'],
-    Status: ['status', 'stage', 'state'],
-    Priority: ['priority', 'prio', 'importance'],
+    Status: ['status', 'state'],
+    Priority: ['priority', 'prio', 'pri', 'importance'],
     DueDate: ['due', 'due date', 'deadline', 'target', 'target date', 'eta', 'end date'],
     StartDate: ['start', 'start date', 'started'],
     Initiative: ['initiative', 'project', 'workstream', 'program'],
@@ -1408,6 +1437,15 @@
     const rows = body.map((r) => { const o = {}; mapping.forEach((k, i) => { if (k && r[i] !== undefined && !o[k]) o[k] = r[i]; }); return o; }).filter((o) => o.Title);
     return { rows, mapping };
   }
+  async function importChunks(rows, dryRun) {
+    const size = 20, out = { dryRun, total: 0, importable: 0, imported: 0, results: [] };
+    for (let i = 0; i < rows.length; i += size) {
+      const r = dryRun ? await api('importTasks', { rows: rows.slice(i, i + size), dryRun: true }) : await write('importTasks', { rows: rows.slice(i, i + size) });
+      out.total += r.total; out.importable += r.importable; out.imported += r.imported;
+      r.results.forEach((x) => { x.row += i; out.results.push(x); });
+    }
+    return out;
+  }
   function importPanel() {
     const st = S.importState || (S.importState = { text: '', preview: null });
     const p = st.preview;
@@ -1423,7 +1461,82 @@
     </div></div>`;
   }
 
-  const VIEWS = { dashboard: renderDashboard, tasks: renderAllTasks, my: renderMyTasks, kanban: renderKanban, calendar: renderCalendar, initiatives: renderInitiatives, initiative: renderInitiativeDetail, projects: renderProjects, project: renderProjectDetail, activity: renderActivity, team: renderTeam, settings: renderSettings };
+  /* ------------------------------------------------------------------
+   *  VIEW: Meeting board (stage tabs · meeting filter · All / Status / Category / Owners)
+   * ---------------------------------------------------------------- */
+  const TASK_STAGES = ['Live', 'Build', 'Under Design', 'Parked', 'Done'];
+  const STAGE_INFO = {
+    Live: { label: 'Live', note: 'Running · weekly update in the team meeting', cls: 'live' },
+    Build: { label: 'Build', note: 'Being built · owner drives it to launch', cls: 'build' },
+    'Under Design': { label: 'Under design', note: 'Scoping · needs owner, plan and date', cls: 'design' },
+    Parked: { label: 'Parked', note: 'Paused 2–3 weeks · review date set', cls: 'parked' },
+    Done: { label: 'Done', note: 'Completed', cls: 'done' }
+  };
+  const PRI = { Critical: 'P0', High: 'P1', Medium: 'P2', Low: 'P3' };
+  /** Stage used on the meeting board: the task's Stage, or one derived from its status. */
+  function effStage(t) {
+    if (t.Stage) return t.Stage;
+    return { 'Not Started': 'Under Design', 'In Progress': 'Build', 'Under Review': 'Build', Blocked: 'Parked', Completed: 'Done', Cancelled: 'Done' }[t.Status] || 'Under Design';
+  }
+  const stagePill = (st) => `<span class="sp sp-${STAGE_INFO[st] ? STAGE_INFO[st].cls : 'design'}">${esc(STAGE_INFO[st] ? STAGE_INFO[st].label : st)}</span>`;
+  const priPill = (p) => `<span class="pp pp-${slug(p)}" title="${esc(p)}">${PRI[p] || esc(p)}</span>`;
+
+  function meetingTasks() {
+    const f = S.filters.mtg;
+    const q = f.q.trim().toLowerCase();
+    return S.data.tasks.filter((t) => !t.Archived && t.Status !== 'Cancelled' &&
+      (!f.meeting || t.Meeting === f.meeting) &&
+      (!q || (t.TaskID + ' ' + t.Title + ' ' + t.Description + ' ' + uname(t.AssignedTo) + ' ' + t.Category).toLowerCase().includes(q)));
+  }
+  function actionTable(rows) {
+    if (!rows.length) return emptyState('focus', 'Nothing here', 'No actions match this stage and meeting.');
+    const sorted = rows.slice().sort((a, b) => PRIORITIES.indexOf(a.Priority) - PRIORITIES.indexOf(b.Priority) || (a.DueDate || '9').localeCompare(b.DueDate || '9') || a.Title.localeCompare(b.Title));
+    return `<div class="table-wrap"><table class="tbl atbl"><thead><tr><th style="width:110px">Status</th><th>Action</th><th>Category</th><th>Owner</th><th>Due</th><th style="text-align:right">Pri</th></tr></thead><tbody>
+      ${sorted.map((t) => { const sub = String(t.Description || '').split('\n')[0]; const oi = (S.data.commentStats[t.TaskID] || {}).openIssues; return `<tr class="${isOverdue(t) ? 'overdue' : ''}" data-action="openTask" data-id="${esc(t.TaskID)}">
+        <td>${stagePill(effStage(t))}</td>
+        <td class="title-cell"><span class="t">${esc(t.Title)}${oi ? ` <span class="issue-pill">${icon('alert', 'ic-sm')}${oi}</span>` : ''}</span><span class="s">${esc(sub.length > 120 ? sub.slice(0, 119) + '…' : sub) || (t.Meeting ? esc(t.Meeting) : '&nbsp;')}</span></td>
+        <td>${t.Category ? `<span class="ctag">${esc(t.Category)}</span>` : '<span class="faint">—</span>'}</td>
+        <td>${person(t.AssignedTo)}</td>
+        <td class="mono">${t.DueDate ? dueCell(t) : '<span class="faint">–</span>'}</td>
+        <td style="text-align:right">${priPill(t.Priority)}</td></tr>`; }).join('')}</tbody></table></div>`;
+  }
+  function renderMeetings() {
+    const f = S.filters.mtg;
+    const all = meetingTasks();
+    const by = (st) => all.filter((t) => effStage(t) === st);
+    const p0 = (arr) => arr.filter((t) => t.Priority === 'Critical').length;
+    let body = '';
+    if (f.mode === 'status') {
+      body = `<div class="stage-tabs">${TASK_STAGES.map((st) => { const n = by(st); return `<button class="stage-tab st-${STAGE_INFO[st].cls} ${f.stage === st ? 'on' : ''}" data-action="mtgSet" data-key="stage" data-v="${esc(st)}">${esc(STAGE_INFO[st].label)} <span class="n">${n.length}</span>${p0(n) ? `<span class="p0">• ${p0(n)} P0</span>` : ''}</button>`; }).join('')}</div>
+        <p class="stage-note">${esc(STAGE_INFO[f.stage].note)}</p>
+        <div class="card">${actionTable(by(f.stage))}</div>`;
+    } else if (f.mode === 'category') {
+      const cats = [...new Set(all.map((t) => t.Category || 'Uncategorised'))].sort((a, b) => (a === 'Others') - (b === 'Others') || a.localeCompare(b));
+      body = cats.map((c) => { const rows = all.filter((t) => (t.Category || 'Uncategorised') === c); return `<div class="group-head"><span class="ctag">${esc(c)}</span><span class="muted">${rows.length}${p0(rows) ? ` · <span class="p0">${p0(rows)} P0</span>` : ''}</span></div><div class="card mb-16">${actionTable(rows)}</div>`; }).join('') || `<div class="card">${actionTable([])}</div>`;
+    } else if (f.mode === 'owners') {
+      const owners = [...new Set(all.map((t) => t.AssignedTo))];
+      const order = (e) => { const i = S.data.users.findIndex((u) => u.Email === e); return e ? (i < 0 ? 999 : i) : 1000; };
+      owners.sort((a, b) => order(a) - order(b));
+      body = owners.map((o) => { const rows = all.filter((t) => t.AssignedTo === o); return `<div class="group-head">${person(o, '')}<span class="muted">${rows.length} action${rows.length === 1 ? '' : 's'}${p0(rows) ? ` · <span class="p0">${p0(rows)} P0</span>` : ''}</span></div><div class="card mb-16">${actionTable(rows)}</div>`; }).join('') || `<div class="card">${actionTable([])}</div>`;
+    } else {
+      const sorted = TASK_STAGES.flatMap((st) => by(st));
+      body = `<div class="card">${actionTable(sorted).replace('<tbody>', '<tbody>')}</div>`;
+    }
+    const forums = settingList('FORUMS');
+    return `<div class="view-head"><div><h2>Meeting board</h2><p class="sub">Actions by stage for ${f.meeting ? esc(f.meeting) : 'all meetings'} · ${plural(all.length, 'action')} · ${p0(all)} P0</p></div></div>
+      <div class="mtg-bar">
+        <div class="seg">${[['all', 'All'], ['status', 'Status'], ['category', 'Category'], ['owners', 'Owners']].map(([k, l]) => `<button class="${f.mode === k ? 'on' : ''}" data-action="mtgSet" data-key="mode" data-v="${k}">${l}</button>`).join('')}</div>
+        <div class="mtg-right">
+          <div class="chips"><button class="chip ${!f.meeting ? 'on' : ''}" data-action="mtgSet" data-key="meeting" data-v="">All meetings</button>${forums.map((m) => `<button class="chip ${f.meeting === m ? 'on' : ''}" data-action="mtgSet" data-key="meeting" data-v="${esc(m)}">${esc(m)}</button>`).join('')}</div>
+          <input class="input" type="search" placeholder="Search" value="${esc(f.q)}" data-input="mtgSearch" aria-label="Search actions" style="width:200px">
+          ${canCreateTask() ? `<button class="btn btn-teal" data-action="newTask" data-meeting="${esc(f.meeting)}" data-stage="${f.mode === 'status' ? esc(f.stage) : ''}">${icon('plus')}Add action</button>` : ''}
+        </div>
+      </div>
+      <div id="mtgBody">${body}</div>
+      <p class="muted mt-16" style="font-size:12.5px">Click any row to update status, owner, due date or notes. Changes save to Google Sheets for everyone.</p>`;
+  }
+
+  const VIEWS = { meetings: renderMeetings, dashboard: renderDashboard, tasks: renderAllTasks, my: renderMyTasks, kanban: renderKanban, calendar: renderCalendar, initiatives: renderInitiatives, initiative: renderInitiativeDetail, projects: renderProjects, project: renderProjectDetail, activity: renderActivity, team: renderTeam, settings: renderSettings };
 
   /* ------------------------------------------------------------------
    *  Task drawer (details, threaded discussion, activity)
@@ -1545,6 +1658,8 @@
       <dl class="meta-grid">
         <dt>Initiative</dt><dd>${ini ? `<a href="#/initiatives/${esc(ini.InitiativeID)}">${esc(ini.Name)}</a>` : '<span class="faint">—</span>'}</dd>
         <dt>Project</dt><dd>${prj ? `<a href="#/projects/${esc(prj.ProjectID)}">${esc(prj.Name)}</a>` : '<span class="faint">—</span>'}</dd>
+        <dt>Stage</dt><dd>${stagePill(effStage(t))}</dd>
+        <dt>Meeting</dt><dd>${esc(t.Meeting || '—')}</dd>
         <dt>Category</dt><dd>${esc(t.Category || '—')}</dd>
         <dt>Assigned to</dt><dd>${person(t.AssignedTo)}</dd>
         <dt>Collaborators</dt><dd>${list(t.Collaborators).length ? `<div class="row">${list(t.Collaborators).map((c) => person(c)).join('')}</div>` : '<span class="faint">—</span>'}</dd>
@@ -1825,7 +1940,9 @@
       { name: 'Priority', label: 'Priority', type: 'select', required: true, options: PRIORITIES },
       { name: 'Status', label: 'Status', type: 'select', required: true, options: STATUSES },
       { name: 'StartDate', label: 'Start date', type: 'date' },
-      { name: 'DueDate', label: 'Due date', type: 'date', required: true },
+      { name: 'DueDate', label: 'Due date', type: 'date', hint: 'Required unless the stage is Parked or Under Design.' },
+      { name: 'Stage', label: 'Stage (meeting board)', type: 'select', options: TASK_STAGES, placeholder: '— Auto from status —' },
+      { name: 'Meeting', label: 'Review meeting', type: 'select', options: settingList('FORUMS'), placeholder: '— No meeting —' },
       { name: 'Progress', label: 'Progress (%)', type: 'range', span: true },
       { name: 'Collaborators', label: 'Collaborators', type: 'checklist', options: activeUsers().map((u) => ({ v: u.Email, l: u.Name })), hint: 'They will be notified and can edit the task.' },
       { name: 'DependsOn', label: 'Depends on (task IDs)', placeholder: 'e.g. TSK-00012, TSK-00015', list: 'taskIdList', hint: 'Comma-separated. The task shows as waiting until these are completed.' },
@@ -1840,6 +1957,7 @@
         const e = {};
         if (v.Title && v.Title.length < 3) e.Title = 'At least 3 characters.';
         if (v.StartDate && v.DueDate && v.StartDate > v.DueDate) e.DueDate = 'Due date cannot be before the start date.';
+        if (!v.DueDate && !['Parked', 'Under Design', 'Done'].includes(v.Stage) && !['Completed', 'Cancelled'].includes(v.Status)) e.DueDate = 'Due date is required (optional for Parked / Under Design).';
         if (v.Progress !== '' && (v.Progress < 0 || v.Progress > 100)) e.Progress = 'Between 0 and 100.';
         const bad = String(v.Links || '').split('\n').map((l) => l.trim()).filter(Boolean).find((l) => !/^https?:\/\/\S+$/i.test(l));
         if (bad) e.Links = 'Not a valid link: ' + bad.slice(0, 50);
@@ -2061,7 +2179,7 @@
     closeDrawer: () => closeDrawer(),
     reloadDrawer: () => loadDrawerDetail(),
     drawerTab: (el) => { S.drawer.tab = el.dataset.tab; if (el.dataset.tab === 'discussion') { enterDiscussion(S.drawer.id); rerenderChromeOnly(); } renderDrawer(); },
-    newTask: (el) => { if (!canCreateTask()) return toast('Viewers cannot create tasks.', 'warn'); openTaskForm(null, { InitiativeID: el.dataset.initiative || '', ProjectID: el.dataset.project || '', AssignedTo: el.dataset.assignee || S.me.email }); },
+    newTask: (el) => { if (!canCreateTask()) return toast('Viewers cannot create tasks.', 'warn'); openTaskForm(null, { InitiativeID: el.dataset.initiative || '', ProjectID: el.dataset.project || '', AssignedTo: el.dataset.assignee || S.me.email, Meeting: el.dataset.meeting || '', Stage: el.dataset.stage || '' }); },
     editTask: (el) => { const t = taskById(el.dataset.id); if (t) openTaskForm(t); },
     duplicateTask: (el) => duplicateTask(el.dataset.id),
     archiveTask: (el) => archiveTask(el.dataset.id),
@@ -2110,14 +2228,14 @@
       const { rows } = mapImport(text);
       if (!rows.length) return toast('No rows with a Title found. Paste rows including a header line.', 'warn');
       el.disabled = true;
-      try { S.importState.preview = await api('importTasks', { rows, dryRun: true }); renderView(); }
+      try { S.importState.preview = await importChunks(rows, true); renderView(); }
       catch (e) { showError(e, 'Preview failed'); } finally { el.disabled = false; }
     },
     importRun: async (el) => {
       const { rows } = mapImport(S.importState.text);
       if (!(await confirmDialog({ title: 'Import tasks?', message: `${S.importState.preview.importable} tasks will be created in Google Sheets and assignees will be notified.`, confirmText: 'Import' }))) return;
       el.disabled = true; el.innerHTML = '<span class="spinner"></span>Importing…';
-      try { const r = await write('importTasks', { rows }); S.importState.preview = r; S.importState.text = ''; toast(`${r.imported} tasks imported`); renderView(); }
+      try { const r = await importChunks(rows, false); S.importState.preview = r; S.importState.text = ''; toast(`${r.imported} tasks imported`); renderView(); }
       catch (e) { el.disabled = false; showError(e, 'Import failed'); }
     },
     ownerChip: (el) => { const p = JSON.parse(el.dataset.preset); const f = S.filters.all; const same = f.team === p.team && (f.assignee || '') === (p.assignee || ''); Object.assign(f, { team: same ? '' : p.team, assignee: same ? '' : (p.assignee || ''), page: 1 }); renderView(); },
@@ -2138,6 +2256,7 @@
       m.el.addEventListener('click', (e) => { if (e.target.closest('[data-action="openTask"]')) m.close(); });
     },
     iniSet: (el) => { S.filters.ini[el.dataset.key] = el.dataset.v; renderView(); },
+    mtgSet: (el) => { S.filters.mtg[el.dataset.key] = el.dataset.v; renderView(); },
     newInitiative: () => openInitiativeForm(null),
     editInitiative: (el) => openInitiativeForm(initiative(el.dataset.id)),
     archiveInitiative: (el) => archiveOwned('initiatives', 'archiveInitiative', initiative(el.dataset.id), 'InitiativeID', 'initiative'),
@@ -2217,6 +2336,7 @@
   const INPUTS = {
     taskFilter: (el) => { const f = S.filters[el.dataset.scope]; f[el.dataset.key] = el.value; f.page = 1; debounce(() => refreshTable(el.dataset.scope)); },
     kanbanFilter: (el) => { S.filters.kanban.q = el.value; debounce(() => { const pos = el.selectionStart; renderView(); const i = $('[data-input="kanbanFilter"]'); if (i) { i.focus(); i.setSelectionRange(pos, pos); } }); },
+    mtgSearch: (el) => { S.filters.mtg.q = el.value; debounce(() => { const pos = el.selectionStart; renderView(); const i = $('[data-input="mtgSearch"]'); if (i) { i.focus(); i.setSelectionRange(pos, pos); } }); },
     iniSearch: (el) => { S.filters.ini.q = el.value; debounce(() => { $('#iniGroups').innerHTML = iniGroupsHtml(); }); },
     actSearch: (el) => { S.filters.act.q = el.value; debounce(() => { const pos = el.selectionStart; renderView(); const i = $('[data-input="actSearch"]'); if (i) { i.focus(); i.setSelectionRange(pos, pos); } }); },
     draft: (el) => { S.drafts[el.dataset.key] = el.value; },
