@@ -21,7 +21,7 @@
   const READ_ACTIONS = new Set(['bootstrap', 'sync', 'getTask', 'getActivity', 'ping', 'config']);
   const AUTH_ERRORS = new Set(['AUTH_EXPIRED', 'AUTH_REQUIRED', 'UNAUTHORIZED', 'AUTH_INVALID']);
   const PAGE_SIZES = [25, 50, 100];
-  const VERSION = '1.12.0'; // must match CONFIG.APP_VERSION in Code.gs
+  const VERSION = '1.13.0'; // must match CONFIG.APP_VERSION in Code.gs
 
   const defaultTaskFilter = () => ({ q: '', stage: '', meeting: '', team: '', status: '', priority: '', assignee: '', initiative: '', project: '', category: '', due: '', archived: false, sort: 'DueDate', dir: 1, page: 1, size: 25 });
 
@@ -527,7 +527,7 @@
     S.me = d.me;
     S.data = {
       tasks: d.tasks || [], initiatives: d.initiatives || [], projects: d.projects || [], users: d.users || [],
-      presence: d.presence || {}, bulkUploadUrl: d.bulkUploadUrl || '', commentStats: d.commentStats || {}, recentComments: d.recentComments || [], notifications: d.notifications || [],
+      presence: d.presence || {}, commentStats: d.commentStats || {}, recentComments: d.recentComments || [], notifications: d.notifications || [],
       activity: d.activity || [], settings: d.settings || {}
     };
     S.userMap = {};
@@ -1490,7 +1490,6 @@
       ['4. Stage: Live, Build, Under design, Parked or Done. Priority: P0, P1, P2 or P3.'],
       ['5. Due date: 2026-11-15 or 15/11/2026 (optional).'],
       ['6. Upload: board ▸ Settings ▸ Bulk upload ▸ Upload the filled template, check the preview, click Import.'],
-      ['   Or paste the rows into the BulkUpload tab of the Google Sheet — they are added automatically every 10 minutes.'],
       ['7. A row with the same title and owner as an existing task is not duplicated (its stage / meeting is updated instead).']];
     const wh = X.utils.aoa_to_sheet(how); wh['!cols'] = [{ wch: 110 }];
     X.utils.book_append_sheet(wb, wh, 'How to use');
@@ -1526,18 +1525,11 @@
   function importPanel() {
     const st = S.importState || (S.importState = { text: '', preview: null });
     const p = st.preview;
-    const url = S.data.bulkUploadUrl;
-    return `<div class="grid grid-2 mb-16">
-      <div class="card"><div class="card-head"><h3>1 · Download the template</h3></div><div class="card-body">
-        <p class="muted">Excel template with the right columns, two example rows, a <b>Valid values</b> sheet (owners, stages, meetings, priorities) and instructions.</p>
+    return `<div class="card mb-16"><div class="card-head"><h3>1 · Download the template</h3></div><div class="card-body">
+        <p class="muted">Excel template with the right columns, two example rows, a <b>Valid values</b> sheet (owners, stages, meetings, priorities) and instructions. Fill it in, then upload it below.</p>
         <div class="row mt-16"><button class="btn btn-primary" data-action="downloadTemplate">${icon('download')}Download template (.xlsx)</button><button class="btn btn-ghost btn-sm" data-action="downloadTemplateCsv">CSV version</button></div>
         <p class="muted mt-8" style="font-size:12px">Columns: ${TEMPLATE_HEAD.join(' · ')}</p></div></div>
-      <div class="card"><div class="card-head"><h3>2 · Google Sheet upload (automatic)</h3></div><div class="card-body">
-        <p class="muted">Add rows to the <b>BulkUpload</b> tab of the Google Sheet (same columns, with dropdowns). New rows are added to the board <b>automatically every 10 minutes</b>, assigned to the owner with stage and due date. The <b>Result</b> column shows what happened to each row.</p>
-        <div class="row mt-16">${url ? `<a class="btn" href="${esc(url)}" target="_blank" rel="noopener">${icon('link')}Open BulkUpload sheet</a>` : '<span class="muted">Run setupHealthcareBoard once in Apps Script to create the BulkUpload tab.</span>'}<button class="btn btn-teal" data-action="processBulk">${icon('refresh')}Process now</button></div>
-        ${st.bulkMsg ? `<div class="alert alert-blue mt-16">${icon('check')}<div>${esc(st.bulkMsg)}</div></div>` : ''}</div></div>
-    </div>
-    <div class="card"><div class="card-head"><h3>3 · Upload the filled template, or paste rows</h3><span class="sub">Preview first — nothing is saved until you click Import</span></div><div class="card-body">
+    <div class="card"><div class="card-head"><h3>2 · Upload the filled template, or paste rows</h3><span class="sub">Preview first — nothing is saved until you click Import</span></div><div class="card-body">
       <div class="upload-drop" id="uploadDrop" data-action="pickFile"><input type="file" id="uploadFile" accept=".xlsx,.xls,.csv,.tsv,.txt" hidden data-change="uploadFile">
         ${icon('download')}<div><b>Upload the filled template</b> (.xlsx or .csv)<div class="muted" style="font-size:12.5px">Click here or drag the file onto this box</div></div></div>
       <div class="login-divider mt-16 mb-16">or paste rows copied from Excel / Google Sheets</div>
@@ -2299,11 +2291,6 @@
     downloadTemplate: () => downloadTemplate().catch((e) => showError(e, 'Template')),
     downloadTemplateCsv: () => downloadTemplateCsv(),
     pickFile: (el, e) => { if (e.target.id !== 'uploadFile') $('#uploadFile').click(); },
-    processBulk: async (el) => {
-      el.disabled = true; el.innerHTML = '<span class="spinner"></span>Processing…';
-      try { const r = await write('processBulkUpload', {}); S.importState.bulkMsg = r.message; toast(r.message, r.failed ? 'warn' : 'ok'); renderView(); }
-      catch (e) { showError(e, 'Bulk upload'); el.disabled = false; }
-    },
     importPreview: async (el) => {
       const text = $('#importText').value;
       S.importState.text = text;
