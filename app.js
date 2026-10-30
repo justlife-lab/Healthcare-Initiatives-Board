@@ -11,12 +11,14 @@
    * ---------------------------------------------------------------- */
   const CFG = Object.assign({ API_URL: '', GOOGLE_CLIENT_ID: '' }, window.HIB_CONFIG || {});
   const STATUSES = ['Not Started', 'In Progress', 'Blocked', 'Under Review', 'Completed', 'Cancelled'];
-  const PRIORITIES = ['Critical', 'High', 'Medium', 'Low'];
+  const PRIORITIES = ['Critical', 'High', 'Medium', 'Low']; // stored values; always shown as P0–P3
+  const PRI = { Critical: 'P0', High: 'P1', Medium: 'P2', Low: 'P3' };
+  const PRI_OPTS = PRIORITIES.map((p) => ({ v: p, l: PRI[p] }));
   const STAGES = ['Under Design', 'Build', 'Live', 'Parked', 'Completed'];
   const PROJECT_STATUSES = ['Planning', 'Active', 'On Hold', 'Completed', 'Cancelled'];
   const ROLES = ['Admin', 'Manager', 'Member', 'Viewer'];
   const STATUS_COLORS = { 'Not Started': '#94A3B8', 'In Progress': '#2563EB', 'Blocked': '#DC2626', 'Under Review': '#D97706', 'Completed': '#16A34A', 'Cancelled': '#CBD5E1' };
-  const PRIORITY_COLORS = { Critical: '#991B1B', High: '#EA580C', Medium: '#2556A0', Low: '#94A3B8' };
+  const PRIORITY_COLORS = { Critical: '#6D28D9', High: '#D97706', Medium: '#2556A0', Low: '#94A3B8' };
   const AVATAR_COLORS = ['#1B4079', '#0D9488', '#7C3AED', '#B45309', '#BE123C', '#0369A1', '#4D7C0F', '#9333EA', '#0F766E', '#C2410C'];
   const READ_ACTIONS = new Set(['bootstrap', 'sync', 'getTask', 'getActivity', 'ping', 'config']);
   const AUTH_ERRORS = new Set(['AUTH_EXPIRED', 'AUTH_REQUIRED', 'UNAUTHORIZED', 'AUTH_INVALID']);
@@ -173,7 +175,7 @@
   }
   const person = (email, size) => (email ? `<span class="person">${avatar(email, size || 'sm')}<span>${esc(uname(email))}</span></span>` : '<span class="tag tag-amber" title="Not assigned yet">TBD</span>');
   const statusBadge = (s) => `<span class="badge st-${slug(s)}">${esc(s)}</span>`;
-  const prioBadge = (p) => `<span class="pr pr-${slug(p)}">${esc(p)}</span>`;
+  const prioBadge = (p) => `<span class="pr pr-${slug(p)}" title="${esc(p)}">${esc(PRI[p] || p)}</span>`;
   const stageBadge = (s) => `<span class="stage stage-${slug(s)}">${esc(s)}</span>`;
   const progressBar = (p, done, lg) => `<div class="prog-row"><div class="progress ${done ? 'done' : ''} ${lg ? 'lg' : ''}"><i style="width:${Math.max(0, Math.min(100, p))}%"></i></div><span class="pct">${p}%</span></div>`;
   const opts = (arr, sel, placeholder) => (placeholder !== undefined ? `<option value="">${esc(placeholder)}</option>` : '') +
@@ -480,7 +482,7 @@
     fresh.slice(0, 3).reverse().forEach(showPopup);
     if (fresh.length > 3) toast(`+${fresh.length - 3} more notifications`, 'warn', { action: 'View', onAction: () => ACTIONS.toggleNotifications() });
   }
-  function openNotif(n) { if (!n.Read) markRead([n.NotificationID]); if (n.EntityType === 'Task') navTask(n.EntityID, /COMMENT|REPLY|MENTION|ISSUE|NOTE|RESOLVED/.test(n.Type) ? 'discussion' : 'details'); }
+  function openNotif(n) { if (!n.Read) markRead([n.NotificationID]); if (n.EntityType === 'Task') navTask(n.EntityID, 'discussion'); }
   function showPopup(n) {
     const title = NOTIF_TITLES[n.Type] || 'Notification';
     // 1) In-app popup card
@@ -814,7 +816,7 @@
       ${f.range === 'custom' ? `<input class="input" type="date" data-change="dash" data-key="from" value="${esc(f.from)}" aria-label="From"><input class="input" type="date" data-change="dash" data-key="to" value="${esc(f.to)}" aria-label="To">` : ''}
       <select class="select" data-change="dash" data-key="stage" aria-label="Stage">${opts(TASK_STAGES.map((x) => ({ v: x, l: STAGE_INFO[x].label })), f.stage || '', 'All stages')}</select>
       <select class="select" data-change="dash" data-key="meeting" aria-label="Meeting">${opts(settingList('FORUMS'), f.meeting || '', 'All meetings')}</select>
-      <select class="select" data-change="dash" data-key="priority" aria-label="Priority">${opts(PRIORITIES, f.priority, 'All priorities')}</select>
+      <select class="select" data-change="dash" data-key="priority" aria-label="Priority">${opts(PRI_OPTS, f.priority, 'All priorities')}</select>
       <select class="select" data-change="dash" data-key="assignee" aria-label="Assignee">${assigneeOpts(f.assignee, 'All assignees')}</select>
       ${filtersActive ? `<button class="btn btn-ghost btn-sm" data-action="resetDash">${icon('x', 'ic-sm')}Clear</button>` : ''}
     </div>
@@ -826,7 +828,7 @@
       ${kpi('Overdue', k.overdue, '#DC2626', { status: 'overdue' }, 'Past due & still open', 'alert')}
       ${kpi('Due today', k.today, '#D97706', { due: 'today' }, '', 'clock')}
       ${kpi('Due this week', k.week, '#0089C2', { due: 'week' }, 'Mon – Sun, open tasks')}
-      ${kpi('High priority', k.high, '#EA580C', { priority: 'high+', status: 'open' }, 'Critical + High, open', 'flag')}
+      ${kpi('High priority', k.high, '#EA580C', { priority: 'high+', status: 'open' }, 'P0 + P1, open', 'flag')}
       ${kpi('Assigned to me', k.mine, '#7C3AED', { assignee: me, status: 'open' }, 'Open tasks', 'user')}
     </div>
     <div class="grid grid-2">
@@ -934,7 +936,7 @@
     return `<div class="filters" role="group" aria-label="Task filters">
       <input class="input grow" type="search" placeholder="Search by title, ID, description or owner…" value="${esc(f.q)}" data-input="taskFilter" data-scope="${scope}" data-key="q" aria-label="Search tasks">
       <select class="select" data-change="taskFilter" data-scope="${scope}" data-key="status" aria-label="Open or overdue">${opts([{ v: 'open', l: 'Open only' }, { v: 'overdue', l: 'Overdue' }], f.status, 'Open + closed')}</select>
-      <select class="select" data-change="taskFilter" data-scope="${scope}" data-key="priority" aria-label="Priority">${opts([{ v: 'high+', l: 'Critical + High' }].concat(PRIORITIES), f.priority, 'All priorities')}</select>
+      <select class="select" data-change="taskFilter" data-scope="${scope}" data-key="priority" aria-label="Priority">${opts([{ v: 'high+', l: 'P0 + P1' }].concat(PRI_OPTS), f.priority, 'All priorities')}</select>
       ${opt.noAssignee ? '' : `<select class="select" data-change="taskFilter" data-scope="${scope}" data-key="assignee" aria-label="Assignee">${assigneeOpts(f.assignee, 'All assignees')}</select>`}
 
       <select class="select" data-change="taskFilter" data-scope="${scope}" data-key="meeting" aria-label="Meeting">${opts(settingList('FORUMS').concat([{ v: '__none__', l: 'No meeting' }]), f.meeting, 'All meetings')}</select>
@@ -1039,7 +1041,7 @@
         <input class="input grow" type="search" placeholder="Filter cards…" value="${esc(f.q)}" data-input="kanbanFilter" data-key="q" aria-label="Filter cards">
         <select class="select" data-change="kanbanFilter" data-key="meeting" aria-label="Meeting">${opts(settingList('FORUMS'), f.meeting || '', 'All meetings')}</select>
         <select class="select" data-change="kanbanFilter" data-key="assignee" aria-label="Assignee">${assigneeOpts(f.assignee, 'All assignees')}</select>
-        <select class="select" data-change="kanbanFilter" data-key="priority" aria-label="Priority">${opts(PRIORITIES, f.priority, 'All priorities')}</select>
+        <select class="select" data-change="kanbanFilter" data-key="priority" aria-label="Priority">${opts(PRI_OPTS, f.priority, 'All priorities')}</select>
       </div>
       <div class="board" id="board">${TASK_STAGES.map((s) => {
         const items = tasks.filter((t) => effStage(t) === s).sort((a, b) => PRIORITIES.indexOf(a.Priority) - PRIORITIES.indexOf(b.Priority) || (a.DueDate || '9').localeCompare(b.DueDate || '9'));
@@ -1101,7 +1103,7 @@
       <div class="actions"><div class="seg"><button class="${!c.mine ? 'on' : ''}" data-action="calMine" data-v="0">Everyone</button><button class="${c.mine ? 'on' : ''}" data-action="calMine" data-v="1">Mine</button></div>
       <select class="select" style="width:200px" data-change="calInit" aria-label="Initiative">${iniOpts(c.initiative, 'All initiatives')}</select></div></div>
       <div class="card"><div class="card-head"><button class="icon-btn sm" data-action="calNav" data-d="-1" aria-label="Previous month">${icon('left')}</button><h3 style="min-width:150px;text-align:center">${esc(title)}</h3><button class="icon-btn sm" data-action="calNav" data-d="1" aria-label="Next month">${icon('right')}</button><button class="btn btn-sm" data-action="calNav" data-d="0">Today</button>
-        <div class="actions legend" style="margin:0"><span><i style="background:#991B1B"></i>Critical</span><span><i style="background:#EA580C"></i>High</span><span><i style="background:var(--red-bg);border:1px solid var(--red)"></i>Overdue</span><span><i style="background:var(--green-bg);border:1px solid var(--green)"></i>Done</span></div></div>
+        <div class="actions legend" style="margin:0"><span><i style="background:#6D28D9"></i>P0</span><span><i style="background:#D97706"></i>P1</span><span><i style="background:var(--red-bg);border:1px solid var(--red)"></i>Overdue</span><span><i style="background:var(--green-bg);border:1px solid var(--green)"></i>Done</span></div></div>
         <div class="cal">${['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map((d) => `<div class="cal-dow">${d}</div>`).join('')}${cells}</div>
         <div class="agenda">${agendaDays.length ? agendaDays.map((d) => `<div class="card-head" style="background:var(--surface-2)"><h4>${fmtDate(d, true)}${d === t0 ? ' · Today' : ''}</h4></div><div class="list">${monthTasks.filter((t) => t.DueDate === d).map((t) => `<div class="list-item" data-action="openTask" data-id="${esc(t.TaskID)}">${avatar(t.AssignedTo, 'sm')}<div class="grow"><span class="t">${esc(t.Title)}</span><span class="s">${esc(t.TaskID)} · ${esc(uname(t.AssignedTo))}</span></div>${statusBadge(t.Status)}</div>`).join('')}</div>`).join('') : emptyState('calendar', 'No deadlines this month', 'Use the arrows to move between months.')}</div>
       </div>`;
@@ -1557,7 +1559,6 @@
     Parked: { label: 'Parked', note: 'Paused 2–3 weeks · review date set', cls: 'parked' },
     Done: { label: 'Done', note: 'Completed', cls: 'done' }
   };
-  const PRI = { Critical: 'P0', High: 'P1', Medium: 'P2', Low: 'P3' };
   /** Stage used on the meeting board: the task's Stage, or one derived from its status. */
   function effStage(t) {
     if (t.Stage === 'Cancelled') return 'Parked'; // stage removed — old values show as Parked
@@ -1628,7 +1629,7 @@
    *  Task drawer (details, threaded discussion, activity)
    * ---------------------------------------------------------------- */
   function openDrawer(id, tab) {
-    S.drawer = { id, tab: tab || 'details', detail: null, loading: true, replyTo: null, editId: null, stale: false };
+    S.drawer = { id, tab: tab || 'discussion', detail: null, loading: true, replyTo: null, editId: null, stale: false };
     if (S.drawer.tab === 'discussion') enterDiscussion(id);
     $('#drawerScrim').hidden = false;
     const d = $('#drawer');
@@ -1708,14 +1709,14 @@
         <h2>${esc(t.Title)}</h2>
         <div class="quick">
           ${quick('Stage', 'Stage', editable ? `<select class="select stage-select ss-${STAGE_INFO[effStage(t)].cls}" data-change="drawerField" data-field="Stage">${opts(TASK_STAGES.map((x) => ({ v: x, l: STAGE_INFO[x].label })), effStage(t))}</select>` : stagePill(effStage(t)))}
-          ${quick('Priority', 'Priority', editable ? `<select class="select" data-change="drawerField" data-field="Priority">${opts(PRIORITIES, t.Priority)}</select>` : prioBadge(t.Priority))}
+          ${quick('Priority', 'Priority', editable ? `<select class="select" data-change="drawerField" data-field="Priority">${opts(PRI_OPTS, t.Priority)}</select>` : prioBadge(t.Priority))}
           ${quick('Assignee', 'AssignedTo', editable ? `<select class="select" data-change="drawerField" data-field="AssignedTo">${userOpts(t.AssignedTo)}</select>` : person(t.AssignedTo))}
           ${quick('Progress', 'Progress', editable && effStage(t) !== 'Done' ? `<select class="select" data-change="drawerField" data-field="Progress">${opts([0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100].map((v) => ({ v, l: v + '%' })), Math.round(effProgress(t) / 10) * 10 === effProgress(t) ? effProgress(t) : '', Math.round(effProgress(t) / 10) * 10 === effProgress(t) ? undefined : effProgress(t) + '%')}</select>` : progressBar(effProgress(t), t.Status === 'Completed'))}
         </div>
       </div>
       <div class="tabs" role="tablist">
-        <button role="tab" class="${dr.tab === 'details' ? 'on' : ''}" data-action="drawerTab" data-tab="details">Details</button>
         <button role="tab" class="${dr.tab === 'discussion' ? 'on' : ''}" data-action="drawerTab" data-tab="discussion">Discussion<span class="pill-count">${cCount}</span></button>
+        <button role="tab" class="${dr.tab === 'details' ? 'on' : ''}" data-action="drawerTab" data-tab="details">Details</button>
         <button role="tab" class="${dr.tab === 'activity' ? 'on' : ''}" data-action="drawerTab" data-tab="activity">Activity</button>
       </div>
       <div class="drawer-body" id="drawerBody">
@@ -2015,7 +2016,7 @@
       { name: 'Category', label: 'Category / department', type: 'select', options: settingList('CATEGORIES'), placeholder: '— Select —' },
       { name: 'Team', label: 'Team', type: 'select', options: settingList('DEPARTMENTS'), placeholder: '— From assignee —' },
       { name: 'AssignedTo', label: 'Assigned to', type: 'select', options: activeUsers().map((u) => ({ v: u.Email, l: u.Name + (u.Department ? ' · ' + u.Department : '') })), placeholder: 'TBD — not assigned yet' },
-      { name: 'Priority', label: 'Priority', type: 'select', required: true, options: PRIORITIES },
+      { name: 'Priority', label: 'Priority', type: 'select', required: true, options: PRI_OPTS },
       { name: 'StartDate', label: 'Start date', type: 'date' },
       { name: 'DueDate', label: 'Due date', type: 'date', hint: 'Leave blank if there is no deadline yet.' },
       { name: 'Stage', label: 'Stage', type: 'select', required: true, options: TASK_STAGES.map((x) => ({ v: x, l: STAGE_INFO[x].label })) },
@@ -2070,7 +2071,7 @@
         { name: 'Objective', label: 'Business objective', type: 'textarea', rows: 2, span: true, placeholder: 'The measurable outcome this initiative delivers' },
         { name: 'Description', label: 'Description', type: 'textarea', rows: 3, span: true },
         { name: 'Owner', label: 'Owner', type: 'select', required: true, options: activeUsers().map((u) => ({ v: u.Email, l: u.Name })), placeholder: '— Select —' },
-        { name: 'Priority', label: 'Priority', type: 'select', options: PRIORITIES },
+        { name: 'Priority', label: 'Priority', type: 'select', options: PRI_OPTS },
         { name: 'Stage', label: 'Stage', type: 'select', options: STAGES },
         { name: 'Category', label: 'Category', type: 'select', options: settingList('CATEGORIES'), placeholder: '— Select —' },
         { name: 'Forum', label: 'Review forum / meeting', type: 'select', options: settingList('FORUMS'), placeholder: '— None —' },
@@ -2362,7 +2363,7 @@
       hidePopovers();
       if (!n) return;
       if (!n.Read) markRead([n.NotificationID]);
-      if (n.EntityType === 'Task') navTask(n.EntityID, /COMMENT|REPLY|MENTION|ISSUE|NOTE|RESOLVED/.test(n.Type) ? 'discussion' : 'details');
+      if (n.EntityType === 'Task') navTask(n.EntityID, 'discussion');
     },
     signOut: () => { hidePopovers(); signOut(); },
     retryLogin: () => showLogin()
