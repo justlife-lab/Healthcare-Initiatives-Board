@@ -21,7 +21,7 @@
   const READ_ACTIONS = new Set(['bootstrap', 'sync', 'getTask', 'getActivity', 'ping', 'config']);
   const AUTH_ERRORS = new Set(['AUTH_EXPIRED', 'AUTH_REQUIRED', 'UNAUTHORIZED', 'AUTH_INVALID']);
   const PAGE_SIZES = [25, 50, 100];
-  const VERSION = '1.8.0'; // must match CONFIG.APP_VERSION in Code.gs
+  const VERSION = '1.9.0'; // must match CONFIG.APP_VERSION in Code.gs
 
   const defaultTaskFilter = () => ({ q: '', stage: '', meeting: '', team: '', status: '', priority: '', assignee: '', initiative: '', project: '', category: '', due: '', archived: false, sort: 'DueDate', dir: 1, page: 1, size: 25 });
 
@@ -797,7 +797,7 @@
       .map((r) => Object.assign(r, { action: `data-action="filterTasks" data-preset='${esc(JSON.stringify({ assignee: r.email }))}'` }));
 
     const overdueList = tasks.filter(isOverdue).sort((a, b) => a.DueDate.localeCompare(b.DueDate)).slice(0, 8);
-    const attention = tasks.filter((t) => t.Status === 'Blocked' || t.Status === 'Under Review' || (OPEN(t.Status) && (openDeps(t).length || (S.data.commentStats[t.TaskID] || {}).openIssues)))
+    const attention = tasks.filter((t) => OPEN(t.Status) && (openDeps(t).length || (S.data.commentStats[t.TaskID] || {}).openIssues))
       .sort((a, b) => PRIORITIES.indexOf(a.Priority) - PRIORITIES.indexOf(b.Priority)).slice(0, 8);
 
     const filtersActive = f.range !== 'all' || f.stage || f.meeting || f.status || f.priority || f.assignee;
@@ -813,19 +813,15 @@
       ${f.range === 'custom' ? `<input class="input" type="date" data-change="dash" data-key="from" value="${esc(f.from)}" aria-label="From"><input class="input" type="date" data-change="dash" data-key="to" value="${esc(f.to)}" aria-label="To">` : ''}
       <select class="select" data-change="dash" data-key="stage" aria-label="Stage">${opts(TASK_STAGES.map((x) => ({ v: x, l: STAGE_INFO[x].label })), f.stage || '', 'All stages')}</select>
       <select class="select" data-change="dash" data-key="meeting" aria-label="Meeting">${opts(settingList('FORUMS'), f.meeting || '', 'All meetings')}</select>
-      <select class="select" data-change="dash" data-key="status" aria-label="Status">${opts(STATUSES, f.status, 'All statuses')}</select>
       <select class="select" data-change="dash" data-key="priority" aria-label="Priority">${opts(PRIORITIES, f.priority, 'All priorities')}</select>
       <select class="select" data-change="dash" data-key="assignee" aria-label="Assignee">${assigneeOpts(f.assignee, 'All assignees')}</select>
       ${filtersActive ? `<button class="btn btn-ghost btn-sm" data-action="resetDash">${icon('x', 'ic-sm')}Clear</button>` : ''}
     </div>
-    <div class="stage-kpis">${TASK_STAGES.map((st) => { const arr = tasks.filter((t) => effStage(t) === st && t.Status !== 'Cancelled'); const p0 = arr.filter((t) => t.Priority === 'Critical' && OPEN(t.Status)).length;
-      return `<button class="kpi stage-kpi" style="--kpi:${{ Live: '#16843A', Build: '#1B4079', 'Under Design': '#6D28D9', Parked: '#64748B', Done: '#0089C2' }[st]}" data-action="filterTasks" data-preset='${esc(JSON.stringify({ stage: st }))}'>
+    <div class="stage-kpis">${TASK_STAGES.map((st) => { const arr = tasks.filter((t) => effStage(t) === st); const p0 = arr.filter((t) => t.Priority === 'Critical' && OPEN(t.Status)).length;
+      return `<button class="kpi stage-kpi" style="--kpi:${STAGE_COLOR[st]}" data-action="filterTasks" data-preset='${esc(JSON.stringify({ stage: st }))}'>
         <span class="kpi-label">${stagePill(st)}</span><span class="kpi-value">${arr.length}</span><span class="kpi-foot">${p0 ? `<span class="p0">${p0} P0 open</span>` : esc(STAGE_INFO[st].note.split(' · ')[0])}</span></button>`; }).join('')}</div>
     <div class="kpis">
       ${kpi('Total tasks', k.total, '#1B4079', {}, 'Excludes archived', 'tasks')}
-      ${kpi('Not started', k.ns, STATUS_COLORS['Not Started'], { status: 'Not Started' })}
-      ${kpi('In progress', k.ip, STATUS_COLORS['In Progress'], { status: 'In Progress' })}
-      ${kpi('Completed', k.done, STATUS_COLORS.Completed, { status: 'Completed' })}
       ${kpi('Overdue', k.overdue, '#DC2626', { status: 'overdue' }, 'Past due & still open', 'alert')}
       ${kpi('Due today', k.today, '#D97706', { due: 'today' }, '', 'clock')}
       ${kpi('Due this week', k.week, '#0089C2', { due: 'week' }, 'Mon – Sun, open tasks')}
@@ -836,11 +832,11 @@
       <div class="card"><div class="card-head"><h3>Workload by team member</h3><span class="sub">Top ${workload.length}</span></div><div class="card-body">
         ${stackedBars(workload, [{ key: 'late', label: 'Overdue', color: '#DC2626' }, { key: 'open', label: 'Open', color: '#2556A0' }, { key: 'done', label: 'Completed', color: '#16A34A' }])}</div></div>
       <div class="card"><div class="card-head"><h3>Tasks by stage</h3><span class="sub">Live · Build · Under design · Parked · Done</span></div><div class="card-body">
-        ${hbars(TASK_STAGES.map((st) => ({ label: STAGE_INFO[st].label, value: tasks.filter((t) => effStage(t) === st).length, color: { Live: '#16843A', Build: '#1B4079', 'Under Design': '#6D28D9', Parked: '#64748B', Done: '#0089C2' }[st], action: `data-action="filterTasks" data-preset='${esc(JSON.stringify({ stage: st }))}'` })))}</div></div>
+        ${hbars(TASK_STAGES.map((st) => ({ label: STAGE_INFO[st].label, value: tasks.filter((t) => effStage(t) === st).length, color: STAGE_COLOR[st], action: `data-action="filterTasks" data-preset='${esc(JSON.stringify({ stage: st }))}'` })))}</div></div>
     </div>
     <div class="grid grid-2 mt-16">
-      <div class="card"><div class="card-head"><h3>Blocked &amp; awaiting feedback</h3><span class="sub">${attention.length}</span></div>
-        <div class="card-body flush">${attention.length ? `<div class="list">${attention.map((t) => { const deps = openDeps(t); return `<div class="list-item" data-action="openTask" data-id="${esc(t.TaskID)}">${avatar(t.AssignedTo, 'sm')}<div class="grow"><span class="t">${esc(t.Title)}</span><span class="s">${esc(t.TaskID)} · ${(S.data.commentStats[t.TaskID] || {}).openIssues ? '⚠ Issue reported — needs help' : t.Status === 'Under Review' ? 'Awaiting review / feedback' : t.Status === 'Blocked' ? 'Blocked' : 'Waiting on ' + deps.map((d) => d.TaskID).join(', ')}</span></div>${statusBadge(t.Status)}</div>`; }).join('')}</div>` : emptyState('check', 'Nothing blocked', 'No tasks are blocked or waiting for feedback.')}</div></div>
+      <div class="card"><div class="card-head"><h3>Needs attention</h3><span class="sub">${attention.length}</span></div>
+        <div class="card-body flush">${attention.length ? `<div class="list">${attention.map((t) => { const deps = openDeps(t); return `<div class="list-item" data-action="openTask" data-id="${esc(t.TaskID)}">${avatar(t.AssignedTo, 'sm')}<div class="grow"><span class="t">${esc(t.Title)}</span><span class="s">${esc(t.TaskID)} · ${(S.data.commentStats[t.TaskID] || {}).openIssues ? '⚠ Issue reported — needs help' : 'Waiting on ' + deps.map((d) => d.TaskID).join(', ')}</span></div>${stagePill(effStage(t))}</div>`; }).join('')}</div>` : emptyState('check', 'Nothing needs attention', 'No open issues or tasks waiting on other tasks.')}</div></div>
       <div class="card"><div class="card-head"><h3>Recent activity</h3><div class="actions"><a class="btn btn-sm btn-ghost" href="#/activity">View all</a></div></div>
         <div class="card-body flush">${feedHtml(S.data.activity.slice(0, 7))}</div></div>
     </div>`;
@@ -883,7 +879,7 @@
     const val = (t) => {
       switch (key) {
         case 'Priority': return PRIORITIES.indexOf(t.Priority);
-        case 'Status': return STATUSES.indexOf(t.Status);
+        case 'Status': case 'Stage': return TASK_STAGES.indexOf(effStage(t));
         case 'AssignedTo': return uname(t.AssignedTo).toLowerCase();
         case 'DueDate': return t.DueDate || '9999';
         case 'Progress': return effProgress(t);
@@ -907,16 +903,16 @@
     const pageRows = sorted.slice((f.page - 1) * f.size, f.page * f.size);
     const th = (key, label, cls) => `<th class="sortable ${cls || ''}" data-action="sort" data-scope="${scope}" data-key="${key}" aria-sort="${f.sort === key ? (f.dir > 0 ? 'ascending' : 'descending') : 'none'}">${label}${f.sort === key ? `<span class="arrow">${f.dir > 0 ? '▲' : '▼'}</span>` : ''}</th>`;
     return `<div class="table-wrap"><table class="tbl responsive">
-      <thead><tr>${th('TaskID', 'ID', 'c-id')}${th('Title', 'Task')}${th('AssignedTo', 'Assignee')}${th('Priority', 'Priority')}${th('Status', 'Status')}${th('DueDate', 'Due')}${th('Progress', 'Progress', 'c-prog')}${th('Comments', '<span class="sr-only">Comments</span>' + icon('chat', 'ic-sm'))}<th class="c-cat"></th></tr></thead>
+      <thead><tr>${th('TaskID', 'ID', 'c-id')}${th('Title', 'Task')}${th('AssignedTo', 'Assignee')}${th('Priority', 'Priority')}${th('Stage', 'Stage')}${th('DueDate', 'Due')}${th('Progress', 'Progress', 'c-prog')}${th('Comments', '<span class="sr-only">Comments</span>' + icon('chat', 'ic-sm'))}<th class="c-cat"></th></tr></thead>
       <tbody>${pageRows.map((t) => {
         const editable = canEditTask(t) && !t.Archived;
         const deps = openDeps(t);
         return `<tr class="${isOverdue(t) ? 'overdue' : ''} ${t.Archived ? 'archived' : ''}" data-action="openTask" data-id="${esc(t.TaskID)}">
           <td class="c-id"><span class="idtag">${esc(t.TaskID)}</span></td>
-          <td class="title-cell"><span class="t">${esc(t.Title)}</span><span class="s">${stagePill(effStage(t))} ${esc([t.Category, t.Meeting].filter(Boolean).join(' · '))}${deps.length ? ` · <span class="tag tag-amber">Waiting on ${esc(deps[0].TaskID)}${deps.length > 1 ? ' +' + (deps.length - 1) : ''}</span>` : ''}${t.Archived ? ' · <span class="tag">Archived</span>' : ''}</span></td>
+          <td class="title-cell"><span class="t">${esc(t.Title)}</span><span class="s">${esc([t.Category, t.Meeting].filter(Boolean).join(' · ') || '—')}${deps.length ? ` · <span class="tag tag-amber">Waiting on ${esc(deps[0].TaskID)}${deps.length > 1 ? ' +' + (deps.length - 1) : ''}</span>` : ''}${t.Archived ? ' · <span class="tag">Archived</span>' : ''}</span></td>
           <td>${person(t.AssignedTo)}</td>
           <td>${prioBadge(t.Priority)}</td>
-          <td>${editable ? `<select class="select select-sm" data-change="quickStatus" data-id="${esc(t.TaskID)}" aria-label="Status of ${esc(t.TaskID)}">${opts(STATUSES, t.Status)}</select>` : statusBadge(t.Status)}</td>
+          <td>${editable ? `<select class="select select-sm stage-select ss-${STAGE_INFO[effStage(t)].cls}" data-change="quickStage" data-id="${esc(t.TaskID)}" aria-label="Stage of ${esc(t.TaskID)}">${opts(TASK_STAGES.map((x) => ({ v: x, l: STAGE_INFO[x].label })), effStage(t))}</select>` : stagePill(effStage(t))}</td>
           <td>${dueCell(t)}</td>
           <td class="c-prog" style="min-width:120px">${progressBar(effProgress(t), t.Status === 'Completed')}</td>
           <td>${commentBadge(t)}</td>
@@ -936,7 +932,7 @@
     const any = f.q || f.stage || f.meeting || f.team || f.status || f.priority || f.assignee || f.initiative || f.project || f.category || f.due || f.archived;
     return `<div class="filters" role="group" aria-label="Task filters">
       <input class="input grow" type="search" placeholder="Search by title, ID, description or owner…" value="${esc(f.q)}" data-input="taskFilter" data-scope="${scope}" data-key="q" aria-label="Search tasks">
-      <select class="select" data-change="taskFilter" data-scope="${scope}" data-key="status" aria-label="Status">${opts([{ v: 'open', l: 'All open' }, { v: 'overdue', l: 'Overdue' }].concat(STATUSES), f.status, 'All statuses')}</select>
+      <select class="select" data-change="taskFilter" data-scope="${scope}" data-key="status" aria-label="Open or overdue">${opts([{ v: 'open', l: 'Open only' }, { v: 'overdue', l: 'Overdue' }], f.status, 'Open + closed')}</select>
       <select class="select" data-change="taskFilter" data-scope="${scope}" data-key="priority" aria-label="Priority">${opts([{ v: 'high+', l: 'Critical + High' }].concat(PRIORITIES), f.priority, 'All priorities')}</select>
       ${opt.noAssignee ? '' : `<select class="select" data-change="taskFilter" data-scope="${scope}" data-key="assignee" aria-label="Assignee">${assigneeOpts(f.assignee, 'All assignees')}</select>`}
 
@@ -1029,10 +1025,10 @@
     const card = (t) => {
       const draggable = canEditTask(t);
       return `<div class="kcard ${isOverdue(t) ? 'overdue' : ''}" data-action="openTask" data-id="${esc(t.TaskID)}" ${draggable ? 'draggable="true"' : ''} tabindex="0" aria-label="${esc(t.Title)}">
-        <div class="meta"><span class="idtag">${esc(t.TaskID)}</span><span class="right">${statusBadge(t.Status)}${priPill(t.Priority)}</span></div>
+        <div class="meta"><span class="idtag">${esc(t.TaskID)}</span><span class="right">${priPill(t.Priority)}</span></div>
         <div class="t">${esc(t.Title)}</div>
         ${t.Category || t.Meeting ? `<div class="meta">${t.Category ? `<span class="ctag">${esc(t.Category)}</span>` : ''}${t.Meeting ? `<span>${esc(t.Meeting)}</span>` : ''}</div>` : ''}
-        ${t.Status === 'In Progress' || t.Status === 'Under Review' ? progressBar(effProgress(t)) : ''}
+        ${effStage(t) === 'Live' || effStage(t) === 'Build' ? progressBar(effProgress(t)) : ''}
         <div class="meta">${avatar(t.AssignedTo, 'sm')}<span>${dueCell(t)}</span><span class="right">${commentBadge(t)}</span></div></div>`;
     };
     S.after = bindKanban;
@@ -1045,9 +1041,9 @@
         <select class="select" data-change="kanbanFilter" data-key="priority" aria-label="Priority">${opts(PRIORITIES, f.priority, 'All priorities')}</select>
       </div>
       <div class="board" id="board">${TASK_STAGES.map((s) => {
-        const items = tasks.filter((t) => effStage(t) === s && t.Status !== 'Cancelled').sort((a, b) => PRIORITIES.indexOf(a.Priority) - PRIORITIES.indexOf(b.Priority) || (a.DueDate || '9').localeCompare(b.DueDate || '9'));
+        const items = tasks.filter((t) => effStage(t) === s).sort((a, b) => PRIORITIES.indexOf(a.Priority) - PRIORITIES.indexOf(b.Priority) || (a.DueDate || '9').localeCompare(b.DueDate || '9'));
         const p0 = items.filter((t) => t.Priority === 'Critical' && OPEN(t.Status)).length;
-        return `<section class="col" aria-label="${esc(STAGE_INFO[s].label)}"><div class="col-head"><span class="dot" style="background:${{ Live: '#16843A', Build: '#1B4079', 'Under Design': '#6D28D9', Parked: '#64748B', Done: '#0089C2' }[s]}"></span>${esc(STAGE_INFO[s].label)}<span class="n">${items.length}</span>${p0 ? `<span class="p0">• ${p0} P0</span>` : ''}</div>
+        return `<section class="col" aria-label="${esc(STAGE_INFO[s].label)}"><div class="col-head"><span class="dot" style="background:${STAGE_COLOR[s]}"></span>${esc(STAGE_INFO[s].label)}<span class="n">${items.length}</span>${p0 ? `<span class="p0">• ${p0} P0</span>` : ''}</div>
           <div class="col-body" data-status="${esc(s)}">${items.map(card).join('') || '<div class="faint" style="text-align:center;padding:16px 0;font-size:12px">No tasks</div>'}</div></section>`;
       }).join('')}</div>`;
   }
@@ -1056,12 +1052,9 @@
   function moveToStage(id, stage) {
     const t = taskById(id);
     if (!t || effStage(t) === stage) return;
-    const patch = { Stage: stage };
-    if (stage === 'Done') patch.Status = 'Completed';
-    else if (t.Status === 'Completed' || t.Status === 'Cancelled') patch.Status = (stage === 'Live' || stage === 'Build') ? 'In Progress' : 'Not Started';
-    else if ((stage === 'Live' || stage === 'Build') && t.Status === 'Not Started') patch.Status = 'In Progress';
-    changeTaskField(id, patch, { optimistic: true });
+    changeTaskField(id, { Stage: stage }, { optimistic: true });
   }
+
 
   function bindKanban() {
     let dragId = null;
@@ -1472,8 +1465,8 @@
       Without a header the order is assumed to be: Title, Owner, Team, Stage, Priority, Due date, Meeting, Description.</p>
       <textarea class="textarea mt-8" id="importText" rows="9" placeholder="Title&#9;Owner&#9;Team&#9;Status&#9;Priority&#9;Due date&#10;Hospital partnership — Mediclinic&#9;Nitish&#9;BD&#9;In progress&#9;High&#9;2026-11-15&#10;Q4 campaign brief&#9;Yana&#9;Marketing&#9;Not started&#9;Medium&#9;30/11/2026" data-input="importText">${esc(st.text)}</textarea>
       <div class="row mt-8"><button class="btn" data-action="importPreview">${icon('search')}Preview</button>${p && p.importable ? `<button class="btn btn-primary" data-action="importRun">${icon('download')}Import / update ${p.importable} task${p.importable === 1 ? '' : 's'}</button>` : ''}<span class="muted" style="font-size:12px">Nothing is saved until you click Import. Duplicate titles for the same owner are skipped.</span></div>
-      ${p ? `<div class="mt-16 table-wrap"><table class="tbl"><thead><tr><th>#</th><th>Title</th><th>Owner</th><th>Team</th><th>Status</th><th>Priority</th><th>Due</th><th>Stage · Meeting</th><th>Notes</th></tr></thead><tbody>
-        ${p.results.map((r) => `<tr style="cursor:default" class="${r.ok || r.update ? '' : 'overdue'}"><td class="muted">${r.row}</td><td class="title-cell"><span class="t">${esc(r.task.Title)}</span>${r.task.TaskID ? `<span class="s">${esc(r.task.TaskID)}</span>` : ''}</td><td>${person(r.task.AssignedTo)}</td><td>${esc(r.task.Team || '—')}</td><td>${statusBadge(r.task.Status)}</td><td>${prioBadge(r.task.Priority)}</td><td>${fmtDate(r.task.DueDate)}</td><td>${r.task.Stage ? stagePill(r.task.Stage) : '—'} ${esc(r.task.Meeting || '')}</td>
+      ${p ? `<div class="mt-16 table-wrap"><table class="tbl"><thead><tr><th>#</th><th>Title</th><th>Owner</th><th>Team</th><th>Stage</th><th>Priority</th><th>Due</th><th>Meeting</th><th>Notes</th></tr></thead><tbody>
+        ${p.results.map((r) => `<tr style="cursor:default" class="${r.ok || r.update ? '' : 'overdue'}"><td class="muted">${r.row}</td><td class="title-cell"><span class="t">${esc(r.task.Title)}</span>${r.task.TaskID ? `<span class="s">${esc(r.task.TaskID)}</span>` : ''}</td><td>${person(r.task.AssignedTo)}</td><td>${esc(r.task.Team || '—')}</td><td>${stagePill(r.task.Stage || 'Under Design')}</td><td>${priPill(r.task.Priority)}</td><td>${fmtDate(r.task.DueDate)}</td><td>${esc(r.task.Meeting || '—')}</td>
         <td style="font-size:12px">${r.ok ? '' : `<span class="${r.update ? 'muted' : 'due-overdue'}">${esc(r.error)}</span><br>`}${r.warnings.map((w) => `<span class="muted">${esc(w)}</span>`).join('<br>')}</td></tr>`).join('')}
         </tbody></table></div><p class="mt-8 muted">${p.dryRun ? `${p.importable} of ${p.total} rows ready to import.` : `<b>${p.imported} tasks imported${p.updated ? `, ${p.updated} existing tasks updated` : ''}.</b>`}</p>` : ''}
     </div></div>`;
@@ -1482,13 +1475,16 @@
   /* ------------------------------------------------------------------
    *  VIEW: Meeting board (stage tabs · meeting filter · All / Status / Category / Owners)
    * ---------------------------------------------------------------- */
-  const TASK_STAGES = ['Live', 'Build', 'Under Design', 'Parked', 'Done'];
+  const TASK_STAGES = ['Live', 'Build', 'Under Design', 'Parked', 'Done', 'Cancelled'];
+  const STAGE_COLOR = { Live: '#16843A', Build: '#1B4079', 'Under Design': '#6D28D9', Parked: '#64748B', Done: '#0089C2', Cancelled: '#B91C1C' };
+  const STAGE_TO_STATUS = { 'Under Design': 'Not Started', Build: 'In Progress', Live: 'In Progress', Parked: 'Not Started', Done: 'Completed', Cancelled: 'Cancelled' };
   const STAGE_INFO = {
     Live: { label: 'Live', note: 'Running · weekly update in the team meeting', cls: 'live' },
     Build: { label: 'Build', note: 'Being built · owner drives it to launch', cls: 'build' },
     'Under Design': { label: 'Under design', note: 'Scoping · needs owner, plan and date', cls: 'design' },
     Parked: { label: 'Parked', note: 'Paused 2–3 weeks · review date set', cls: 'parked' },
-    Done: { label: 'Done', note: 'Completed', cls: 'done' }
+    Done: { label: 'Done', note: 'Completed', cls: 'done' },
+    Cancelled: { label: 'Cancelled', note: 'Stopped · no further work', cls: 'cancelled' }
   };
   const PRI = { Critical: 'P0', High: 'P1', Medium: 'P2', Low: 'P3' };
   /** Stage used on the meeting board: the task's Stage, or one derived from its status. */
@@ -1639,10 +1635,10 @@
           </div></div>
         <h2>${esc(t.Title)}</h2>
         <div class="quick">
-          ${quick('Status', 'Status', editable ? `<select class="select" data-change="drawerField" data-field="Status">${opts(STATUSES, t.Status)}</select>` : statusBadge(t.Status))}
+          ${quick('Stage', 'Stage', editable ? `<select class="select stage-select ss-${STAGE_INFO[effStage(t)].cls}" data-change="drawerField" data-field="Stage">${opts(TASK_STAGES.map((x) => ({ v: x, l: STAGE_INFO[x].label })), effStage(t))}</select>` : stagePill(effStage(t)))}
           ${quick('Priority', 'Priority', editable ? `<select class="select" data-change="drawerField" data-field="Priority">${opts(PRIORITIES, t.Priority)}</select>` : prioBadge(t.Priority))}
           ${quick('Assignee', 'AssignedTo', editable ? `<select class="select" data-change="drawerField" data-field="AssignedTo">${userOpts(t.AssignedTo)}</select>` : person(t.AssignedTo))}
-          ${quick('Progress', 'Progress', editable && t.Status !== 'Completed' ? `<select class="select" data-change="drawerField" data-field="Progress">${opts([0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100].map((v) => ({ v, l: v + '%' })), Math.round(effProgress(t) / 10) * 10 === effProgress(t) ? effProgress(t) : '', Math.round(effProgress(t) / 10) * 10 === effProgress(t) ? undefined : effProgress(t) + '%')}</select>` : progressBar(effProgress(t), t.Status === 'Completed'))}
+          ${quick('Progress', 'Progress', editable && !['Done', 'Cancelled'].includes(effStage(t)) ? `<select class="select" data-change="drawerField" data-field="Progress">${opts([0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100].map((v) => ({ v, l: v + '%' })), Math.round(effProgress(t) / 10) * 10 === effProgress(t) ? effProgress(t) : '', Math.round(effProgress(t) / 10) * 10 === effProgress(t) ? undefined : effProgress(t) + '%')}</select>` : progressBar(effProgress(t), t.Status === 'Completed'))}
         </div>
       </div>
       <div class="tabs" role="tablist">
@@ -1665,15 +1661,12 @@
     const links = String(t.Links || '').split('\n').filter((l) => /^https?:\/\//i.test(l));
     const alerts = [];
     if (isOverdue(t)) alerts.push(`<div class="alert alert-red">${icon('alert')}<div>Overdue by ${plural(daysBetween(t.DueDate, today()), 'day')} — due ${fmtDate(t.DueDate, true)}.</div></div>`);
-    if (t.Status === 'Blocked') alerts.push(`<div class="alert alert-red">${icon('alert')}<div>This task is <b>blocked</b>. Use the discussion to record what is needed to unblock it.</div></div>`);
     const oi = (S.data.commentStats[t.TaskID] || {}).openIssues || 0;
     if (oi) alerts.push(`<div class="alert alert-red">${icon('alert')}<div><b>${plural(oi, 'open issue')}</b> reported on this task. <a href="javascript:void 0" data-action="drawerTab" data-tab="discussion">See discussion</a></div></div>`);
-    if (t.Status === 'Under Review') alerts.push(`<div class="alert alert-amber">${icon('clock')}<div>Awaiting review / feedback.</div></div>`);
     if (openD.length && OPEN(t.Status)) alerts.push(`<div class="alert alert-amber">${icon('link')}<div>Waiting on ${openD.map((d) => `<a href="javascript:void 0" data-action="openTask" data-id="${esc(d.TaskID)}">${esc(d.TaskID)}</a>`).join(', ')} to be completed.</div></div>`);
     return `${alerts.join('')}
       <div class="desc prewrap">${t.Description ? linkify(esc(t.Description)) : '<span class="muted">No description.</span>'}</div>
       <dl class="meta-grid">
-        <dt>Stage</dt><dd>${stagePill(effStage(t))}</dd>
         <dt>Meeting</dt><dd>${esc(t.Meeting || '—')}</dd>
         <dt>Category</dt><dd>${esc(t.Category || '—')}</dd>
         <dt>Assigned to</dt><dd>${person(t.AssignedTo)}</dd>
@@ -1682,7 +1675,7 @@
         <dt>Start date</dt><dd>${fmtDate(t.StartDate, true)}</dd>
         <dt>Due date</dt><dd>${t.DueDate ? fmtDate(t.DueDate, true) : '—'} ${dueCell(t).includes('overdue') || isDueToday(t) ? '· ' + dueCell(t) : ''}</dd>
         <dt>Completed</dt><dd>${t.CompletedDate ? fmtDate(t.CompletedDate, true) : '<span class="faint">—</span>'}</dd>
-        <dt>Depends on</dt><dd>${deps.length ? deps.map((d) => `<div><a href="javascript:void 0" data-action="openTask" data-id="${esc(d.TaskID)}">${esc(d.TaskID)}</a> ${esc(d.Title)} ${d.Status ? statusBadge(d.Status) : ''}</div>`).join('') : '<span class="faint">—</span>'}</dd>
+        <dt>Depends on</dt><dd>${deps.length ? deps.map((d) => `<div><a href="javascript:void 0" data-action="openTask" data-id="${esc(d.TaskID)}">${esc(d.TaskID)}</a> ${esc(d.Title)} ${taskById(d.TaskID) ? stagePill(effStage(taskById(d.TaskID))) : ''}</div>`).join('') : '<span class="faint">—</span>'}</dd>
         <dt>Blocking</dt><dd>${dependents.length ? dependents.map((d) => `<div><a href="javascript:void 0" data-action="openTask" data-id="${esc(d.TaskID)}">${esc(d.TaskID)}</a> ${esc(d.Title)}</div>`).join('') : '<span class="faint">—</span>'}</dd>
         <dt>Links</dt><dd>${links.length ? links.map((l) => `<div><a href="${esc(l)}" target="_blank" rel="noopener noreferrer">${icon('link', 'ic-sm')} ${esc(l.length > 60 ? l.slice(0, 59) + '…' : l)}</a></div>`).join('') : '<span class="faint">—</span>'}</dd>
         <dt>Last updated</dt><dd>${esc(fmtDateTime(t.UpdatedAt))} by ${esc(uname(t.UpdatedBy))}</dd>
@@ -1754,7 +1747,7 @@
     const t = taskById(id);
     if (!t) return;
     const before = Object.assign({}, t);
-    if (opt.optimistic) { Object.assign(t, patch); if (patch.Status === 'Completed') t.Progress = 100; renderView(); }
+    if (opt.optimistic) { Object.assign(t, patch); if (patch.Stage) t.Status = STAGE_TO_STATUS[patch.Stage]; if (t.Status === 'Completed') t.Progress = 100; renderView(); }
     try {
       const d = await write('saveTask', { id, version: before.Version, patch });
       upsert('tasks', d.task);
@@ -1942,7 +1935,7 @@
   function openTaskForm(t, preset) {
     preset = preset || {};
     const isNew = !t;
-    const values = t ? Object.assign({}, t, { Progress: effProgress(t) }) : Object.assign({ Status: 'Not Started', Priority: 'Medium', Progress: 0, AssignedTo: S.me.role === 'Viewer' ? '' : S.me.email, DueDate: addDays(today(), 7), StartDate: today() }, preset);
+    const values = t ? Object.assign({}, t, { Progress: effProgress(t), Stage: effStage(t) }) : Object.assign({ Stage: 'Under Design', Priority: 'Medium', Progress: 0, AssignedTo: S.me.role === 'Viewer' ? '' : S.me.email, DueDate: addDays(today(), 7), StartDate: today() }, preset);
     const others = S.data.tasks.filter((x) => !x.Archived && (!t || x.TaskID !== t.TaskID));
     const fields = [
       { name: 'Title', label: 'Title', required: true, span: true, max: 200, placeholder: 'e.g. Finalise nurse onboarding checklist' },
@@ -1951,10 +1944,9 @@
       { name: 'Team', label: 'Team', type: 'select', options: settingList('DEPARTMENTS'), placeholder: '— From assignee —' },
       { name: 'AssignedTo', label: 'Assigned to', type: 'select', options: activeUsers().map((u) => ({ v: u.Email, l: u.Name + (u.Department ? ' · ' + u.Department : '') })), placeholder: 'TBD — not assigned yet' },
       { name: 'Priority', label: 'Priority', type: 'select', required: true, options: PRIORITIES },
-      { name: 'Status', label: 'Status', type: 'select', required: true, options: STATUSES },
       { name: 'StartDate', label: 'Start date', type: 'date' },
       { name: 'DueDate', label: 'Due date', type: 'date', hint: 'Leave blank if there is no deadline yet.' },
-      { name: 'Stage', label: 'Stage (meeting board)', type: 'select', options: TASK_STAGES, placeholder: '— Auto from status —' },
+      { name: 'Stage', label: 'Stage', type: 'select', required: true, options: TASK_STAGES.map((x) => ({ v: x, l: STAGE_INFO[x].label })) },
       { name: 'Meeting', label: 'Review meeting', type: 'select', options: settingList('FORUMS'), placeholder: '— No meeting —' },
       { name: 'Progress', label: 'Progress (%)', type: 'range', span: true },
       { name: 'Collaborators', label: 'Collaborators', type: 'checklist', options: activeUsers().map((u) => ({ v: u.Email, l: u.Name })), hint: 'They will be notified and can edit the task.' },
@@ -1970,7 +1962,7 @@
         const e = {};
         if (v.Title && v.Title.length < 3) e.Title = 'At least 3 characters.';
         if (v.StartDate && v.DueDate && v.StartDate > v.DueDate) e.DueDate = 'Due date cannot be before the start date.';
-        if (isNew && !v.DueDate && !['Parked', 'Under Design', 'Done'].includes(v.Stage) && !['Completed', 'Cancelled'].includes(v.Status)) e.DueDate = 'Please set a due date (optional for Parked / Under Design).';
+        if (isNew && !v.DueDate && !['Parked', 'Under Design', 'Done', 'Cancelled'].includes(v.Stage)) e.DueDate = 'Please set a due date (optional for Parked / Under Design).';
         if (v.Progress !== '' && (v.Progress < 0 || v.Progress > 100)) e.Progress = 'Between 0 and 100.';
         const bad = String(v.Links || '').split('\n').map((l) => l.trim()).filter(Boolean).find((l) => !/^https?:\/\/\S+$/i.test(l));
         if (bad) e.Links = 'Not a valid link: ' + bad.slice(0, 50);
@@ -1980,7 +1972,7 @@
       },
       onChange: (name, v, form) => {
         if (name === 'AssignedTo' && v.AssignedTo && !v.Team) { const d = user(v.AssignedTo).Department; if (d) form.querySelector('[name="Team"]').value = d; }
-        if (name === 'Status' && v.Status === 'Completed') { form.querySelector('[name="Progress"]').value = 100; const r = form.querySelector('input[type=range]'); if (r) r.value = 100; }
+        if (name === 'Stage' && v.Stage === 'Done') { form.querySelector('[name="Progress"]').value = 100; const r = form.querySelector('input[type=range]'); if (r) r.value = 100; }
       },
       onSubmit: async (v) => {
         v.DependsOn = list(v.DependsOn).map((x) => x.toUpperCase()).join(', ');
@@ -2128,7 +2120,7 @@
     S.data.tasks.forEach((t) => {
       if (t.Archived) return;
       const hay = (t.TaskID + ' ' + t.Title + ' ' + t.Description + ' ' + uname(t.AssignedTo)).toLowerCase();
-      if (hay.includes(q)) out.push({ score: t.TaskID.toLowerCase() === q ? 0 : t.Title.toLowerCase().includes(q) ? 1 : 2, html: `${statusBadge(t.Status)}<span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"><b>${esc(t.TaskID)}</b> ${esc(t.Title)}</span><span class="sr-kind">${esc(uname(t.AssignedTo))}</span>`, act: () => navTask(t.TaskID) });
+      if (hay.includes(q)) out.push({ score: t.TaskID.toLowerCase() === q ? 0 : t.Title.toLowerCase().includes(q) ? 1 : 2, html: `${stagePill(effStage(t))}<span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"><b>${esc(t.TaskID)}</b> ${esc(t.Title)}</span><span class="sr-kind">${esc(uname(t.AssignedTo))}</span>`, act: () => navTask(t.TaskID) });
     });
     activeUsers().forEach((u) => { if ((u.Name + ' ' + u.Email).toLowerCase().includes(q)) out.push({ score: 2, html: `${avatar(u.Email, 'sm')}<span><b>${esc(u.Name)}</b></span><span class="sr-kind">Person · open tasks</span>`, act: () => applyTaskPreset({ assignee: u.Email, status: 'open' }) }); });
     return out.sort((a, b) => a.score - b.score).slice(0, 10);
@@ -2161,7 +2153,7 @@
   function exportCsv(scope) {
     const f = S.filters[scope];
     const rows = sortTasks(filterTasks(f, scope === 'my' ? myBase(f.tab) : S.data.tasks), f.sort, f.dir);
-    const cols = ['TaskID', 'Title', 'Stage', 'Meeting', 'Status', 'Priority', 'AssignedTo', 'Collaborators', 'Team', 'Category', 'StartDate', 'DueDate', 'CompletedDate', 'Progress', 'CreatedBy', 'CreatedAt', 'UpdatedAt'];
+    const cols = ['TaskID', 'Title', 'Stage', 'Meeting', 'Priority', 'AssignedTo', 'Collaborators', 'Team', 'Category', 'StartDate', 'DueDate', 'CompletedDate', 'Progress', 'CreatedBy', 'CreatedAt', 'UpdatedAt'];
     const cell = (v) => { let s = String(v === null || v === undefined ? '' : v); if (/^[=+\-@]/.test(s)) s = "'" + s; return '"' + s.replace(/"/g, '""') + '"'; };
     const csv = [cols.join(',')].concat(rows.map((t) => cols.map((c) => cell(t[c])).join(','))).join('\r\n');
     const a = document.createElement('a');
@@ -2328,7 +2320,7 @@
       try { const d = await write('saveUser', { email: u.Email, patch: { Role: role } }); upsert('users', d.user); toast(`${u.Name} is now ${role}`); rerender(); }
       catch (e) { el.value = u.Role; showError(e, 'Role not changed'); }
     },
-    quickStatus: (el) => changeTaskField(el.dataset.id, { Status: el.value }),
+    quickStage: (el) => changeTaskField(el.dataset.id, { Stage: el.value }),
     drawerField: (el) => { const v = el.dataset.field === 'Progress' ? Number(el.value) : el.value; changeTaskField(S.drawer.id, { [el.dataset.field]: v }); },
     kanbanFilter: (el) => { S.filters.kanban[el.dataset.key] = el.value; renderView(); },
     calInit: (el) => { S.cal.initiative = el.value; renderView(); },

@@ -671,3 +671,16 @@ table.tbl { width: 100%; border-collapse: collapse; }
 .stage-kpi .kpi-value { font-size: 32px; }
 @media (max-width: 900px) { .stage-kpis { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
 @media (max-width: 520px) { .stage-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
+/* ---------- Stage as the single workflow field ---------- */
+.sp-cancelled { background: var(--red-bg); color: var(--red); text-decoration: line-through; }
+.stage-tab.on.st-cancelled { background: #B91C1C; border-color: #B91C1C; color: #fff; }
+.stage-tabs.six { grid-template-columns: 0.7fr repeat(6, minmax(0, 1fr)); }
+.stage-kpis { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+.stage-select { font-weight: 600; }
+.ss-live { color: #15803D; } .ss-build { color: var(--blue); } .ss-design { color: var(--violet); } .ss-parked { color: var(--slate); } .ss-done { color: var(--teal-600); } .ss-cancelled { color: var(--red); }
+@media (max-width: 1100px) { .stage-tabs.six { grid-template-columns: repeat(4, minmax(0, 1fr)); } .stage-kpis { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (max-width: 520px) { .stage-tabs.six { grid-template-columns: repeat(2, minmax(0, 1fr)); } .stage-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.stage-tab.st-cancelled, .stage-tab.st-cancelled * { text-decoration: none; }
+.stage-tabs.six .stage-tab { font-size: 13px; gap: 5px; padding: 6px 6px; height: auto; min-height: 44px; flex-wrap: wrap; white-space: normal; line-height: 1.2; }
+.stage-tabs.six .stage-tab .p0 { font-size: 10.5px; }
