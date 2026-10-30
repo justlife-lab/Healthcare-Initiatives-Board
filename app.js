@@ -21,7 +21,7 @@
   const READ_ACTIONS = new Set(['bootstrap', 'sync', 'getTask', 'getActivity', 'ping', 'config']);
   const AUTH_ERRORS = new Set(['AUTH_EXPIRED', 'AUTH_REQUIRED', 'UNAUTHORIZED', 'AUTH_INVALID']);
   const PAGE_SIZES = [25, 50, 100];
-  const VERSION = '1.9.0'; // must match CONFIG.APP_VERSION in Code.gs
+  const VERSION = '1.11.0'; // must match CONFIG.APP_VERSION in Code.gs
 
   const defaultTaskFilter = () => ({ q: '', stage: '', meeting: '', team: '', status: '', priority: '', assignee: '', initiative: '', project: '', category: '', due: '', archived: false, sort: 'DueDate', dir: 1, page: 1, size: 25 });
 
@@ -251,10 +251,11 @@
       let done = false;
       const m = openModal({
         title: o.title, size: 'sm',
-        body: `<p>${esc(o.message)}</p>`,
-        foot: `<button class="btn" data-close>${esc(o.cancelText || 'Cancel')}</button><button class="btn ${o.danger ? 'btn-danger' : 'btn-primary'}" data-ok>${esc(o.confirmText || 'Confirm')}</button>`,
+        body: o.danger ? `<div class="confirm-danger">${icon('alert')}<div><p class="confirm-q">${esc(o.question || 'Are you sure?')}</p><p>${esc(o.message)}</p></div></div>` : `<p>${esc(o.message)}</p>`,
+        foot: `<button class="btn" data-close data-cancel>${esc(o.cancelText || 'Cancel')}</button><button class="btn ${o.danger ? 'btn-danger' : 'btn-primary'}" data-ok>${esc(o.confirmText || 'Confirm')}</button>`,
         onClose: () => { if (!done) resolve(false); }
       });
+      setTimeout(() => { const c = m.el.querySelector(o.danger ? '[data-cancel]' : '[data-ok]'); if (c) c.focus(); }, 40);
       m.el.querySelector('[data-ok]').onclick = () => { done = true; m.close(); resolve(true); };
     });
   }
@@ -463,7 +464,7 @@
   /* ------------------------------------------------------------------
    *  Popups: in-app card + desktop (browser) notification for new alerts
    * ---------------------------------------------------------------- */
-  const NOTIF_TITLES = { MENTION: 'You were tagged', ISSUE: '⚠ Issue reported', NOTE: 'New note / instruction', ASSIGNED: 'New task for you', REASSIGNED: 'Task reassigned',
+  const NOTIF_TITLES = { STAGE_BUILD: '🚀 Moved to Build', MENTION: 'You were tagged', ISSUE: '⚠ Issue reported', NOTE: 'New note / instruction', ASSIGNED: 'New task for you', REASSIGNED: 'Task reassigned',
     REPLY: 'New reply', COMMENT: 'New comment', RESOLVED: 'Issue resolved', NOT_STARTED: '⏰ Deadline near — not started', DUE_SOON: 'Due soon', OVERDUE: 'Task overdue', BLOCKED: 'Task blocked', COMPLETED: 'Task completed' };
   const notifKey = () => 'hib-notif-known:' + (S.me ? S.me.email : '');
   const desktopSupported = () => 'Notification' in window;
@@ -1383,7 +1384,7 @@
         ${fld('TIMEZONE', 'Time zone', 'IANA name, e.g. Asia/Dubai.')}${fld('POLL_SECONDS', 'Refresh interval (seconds)', 'How often browsers check for team changes (min 15).')}
         ${fld('DUE_SOON_DAYS', 'Due-soon reminder (days)', 'Days before the due date for reminders.')}${fld('STAGE_CAPS', 'Stage caps', 'e.g. Live=8, Build=8, Under Design=8')}
         ${fld('EMAIL_ENABLED', 'Send email notifications', 'TRUE sends emails for the types below.', 'bool')}${fld('BOARD_URL', 'Board link (for emails)', 'Your GitHub Pages address.')}
-        ${fld('EMAIL_TYPES', 'Emailed notification types', 'MENTION, ASSIGNED, ISSUE, NOTE, NOT_STARTED, OVERDUE (also: REPLY, COMMENT, DUE_SOON, BLOCKED, COMPLETED, RESOLVED)', 'area')}
+        ${fld('EMAIL_TYPES', 'Emailed notification types', 'MENTION, ASSIGNED, ISSUE, NOTE, NOT_STARTED, OVERDUE, STAGE_BUILD (also: REPLY, COMMENT, DUE_SOON, COMPLETED, RESOLVED)', 'area')}
         ${fld('CATEGORIES', 'Categories / departments', 'Comma-separated list.', 'area')}${fld('FORUMS', 'Review forums / meetings', 'Comma-separated list.', 'area')}${fld('DEPARTMENTS', 'Departments (for users)', 'Comma-separated list.', 'area')}
         </div><div class="alert alert-blue mt-16">${icon('lock')}<div>For security, <b>AUTH_MODE</b> (currently <b>${esc(s.AUTH_MODE)}</b>) and <b>GOOGLE_CLIENT_ID</b> can only be changed directly in the Settings sheet by the spreadsheet owner.</div></div>
         <div class="row end mt-16"><button class="btn btn-primary" data-action="saveConfig">Save configuration</button></div></div></div>`;
@@ -1475,7 +1476,7 @@
   /* ------------------------------------------------------------------
    *  VIEW: Meeting board (stage tabs · meeting filter · All / Status / Category / Owners)
    * ---------------------------------------------------------------- */
-  const TASK_STAGES = ['Live', 'Build', 'Under Design', 'Parked', 'Done', 'Cancelled'];
+  const TASK_STAGES = ['Live', 'Build', 'Under Design', 'Parked', 'Done'];
   const STAGE_COLOR = { Live: '#16843A', Build: '#1B4079', 'Under Design': '#6D28D9', Parked: '#64748B', Done: '#0089C2', Cancelled: '#B91C1C' };
   const STAGE_TO_STATUS = { 'Under Design': 'Not Started', Build: 'In Progress', Live: 'In Progress', Parked: 'Not Started', Done: 'Completed', Cancelled: 'Cancelled' };
   const STAGE_INFO = {
@@ -1483,14 +1484,14 @@
     Build: { label: 'Build', note: 'Being built · owner drives it to launch', cls: 'build' },
     'Under Design': { label: 'Under design', note: 'Scoping · needs owner, plan and date', cls: 'design' },
     Parked: { label: 'Parked', note: 'Paused 2–3 weeks · review date set', cls: 'parked' },
-    Done: { label: 'Done', note: 'Completed', cls: 'done' },
-    Cancelled: { label: 'Cancelled', note: 'Stopped · no further work', cls: 'cancelled' }
+    Done: { label: 'Done', note: 'Completed', cls: 'done' }
   };
   const PRI = { Critical: 'P0', High: 'P1', Medium: 'P2', Low: 'P3' };
   /** Stage used on the meeting board: the task's Stage, or one derived from its status. */
   function effStage(t) {
+    if (t.Stage === 'Cancelled') return 'Parked'; // stage removed — old values show as Parked
     if (t.Stage) return t.Stage;
-    return { 'Not Started': 'Under Design', 'In Progress': 'Build', 'Under Review': 'Build', Blocked: 'Parked', Completed: 'Done', Cancelled: 'Done' }[t.Status] || 'Under Design';
+    return { 'Not Started': 'Under Design', 'In Progress': 'Build', 'Under Review': 'Build', Blocked: 'Parked', Completed: 'Done', Cancelled: 'Parked' }[t.Status] || 'Under Design';
   }
   const stagePill = (st) => `<span class="sp sp-${STAGE_INFO[st] ? STAGE_INFO[st].cls : 'design'}">${esc(STAGE_INFO[st] ? STAGE_INFO[st].label : st)}</span>`;
   const priPill = (p) => `<span class="pp pp-${slug(p)}" title="${esc(p)}">${PRI[p] || esc(p)}</span>`;
@@ -1638,7 +1639,7 @@
           ${quick('Stage', 'Stage', editable ? `<select class="select stage-select ss-${STAGE_INFO[effStage(t)].cls}" data-change="drawerField" data-field="Stage">${opts(TASK_STAGES.map((x) => ({ v: x, l: STAGE_INFO[x].label })), effStage(t))}</select>` : stagePill(effStage(t)))}
           ${quick('Priority', 'Priority', editable ? `<select class="select" data-change="drawerField" data-field="Priority">${opts(PRIORITIES, t.Priority)}</select>` : prioBadge(t.Priority))}
           ${quick('Assignee', 'AssignedTo', editable ? `<select class="select" data-change="drawerField" data-field="AssignedTo">${userOpts(t.AssignedTo)}</select>` : person(t.AssignedTo))}
-          ${quick('Progress', 'Progress', editable && !['Done', 'Cancelled'].includes(effStage(t)) ? `<select class="select" data-change="drawerField" data-field="Progress">${opts([0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100].map((v) => ({ v, l: v + '%' })), Math.round(effProgress(t) / 10) * 10 === effProgress(t) ? effProgress(t) : '', Math.round(effProgress(t) / 10) * 10 === effProgress(t) ? undefined : effProgress(t) + '%')}</select>` : progressBar(effProgress(t), t.Status === 'Completed'))}
+          ${quick('Progress', 'Progress', editable && effStage(t) !== 'Done' ? `<select class="select" data-change="drawerField" data-field="Progress">${opts([0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100].map((v) => ({ v, l: v + '%' })), Math.round(effProgress(t) / 10) * 10 === effProgress(t) ? effProgress(t) : '', Math.round(effProgress(t) / 10) * 10 === effProgress(t) ? undefined : effProgress(t) + '%')}</select>` : progressBar(effProgress(t), t.Status === 'Completed'))}
         </div>
       </div>
       <div class="tabs" role="tablist">
@@ -1782,7 +1783,7 @@
     const t = taskById(id);
     if (!t) return;
     const restore = !!t.Archived;
-    const ok = await confirmDialog({ title: restore ? 'Restore task?' : 'Archive task?', message: restore ? `${id} will be visible in task lists again.` : `${id} “${t.Title}” will be hidden from boards and dashboards. It stays in Google Sheets and can be restored at any time.`, confirmText: restore ? 'Restore' : 'Archive', danger: !restore });
+    const ok = await confirmDialog({ title: restore ? 'Restore task?' : 'Archive task', question: `Are you sure you want to archive ${id}?`, message: restore ? `${id} will be visible in task lists again.` : `${id} “${t.Title}” will be hidden from boards and dashboards. It stays in Google Sheets and can be restored at any time.`, confirmText: restore ? 'Restore' : 'Archive', danger: !restore });
     if (!ok) return;
     try {
       const d = await write('archiveTask', { id, version: t.Version, archived: !restore });
@@ -1962,7 +1963,7 @@
         const e = {};
         if (v.Title && v.Title.length < 3) e.Title = 'At least 3 characters.';
         if (v.StartDate && v.DueDate && v.StartDate > v.DueDate) e.DueDate = 'Due date cannot be before the start date.';
-        if (isNew && !v.DueDate && !['Parked', 'Under Design', 'Done', 'Cancelled'].includes(v.Stage)) e.DueDate = 'Please set a due date (optional for Parked / Under Design).';
+        if (isNew && !v.DueDate && !['Parked', 'Under Design', 'Done'].includes(v.Stage)) e.DueDate = 'Please set a due date (optional for Parked / Under Design).';
         if (v.Progress !== '' && (v.Progress < 0 || v.Progress > 100)) e.Progress = 'Between 0 and 100.';
         const bad = String(v.Links || '').split('\n').map((l) => l.trim()).filter(Boolean).find((l) => !/^https?:\/\/\S+$/i.test(l));
         if (bad) e.Links = 'Not a valid link: ' + bad.slice(0, 50);
@@ -2093,10 +2094,10 @@
   function renderNotifications() {
     const ns = S.data.notifications;
     const unread = ns.filter((n) => !n.Read).length;
-    const ic = { MENTION: 'chat', ISSUE: 'alert', NOTE: 'edit', RESOLVED: 'check', NOT_STARTED: 'clock', ASSIGNED: 'user', REASSIGNED: 'user', COMMENT: 'chat', REPLY: 'reply', DUE_SOON: 'clock', OVERDUE: 'alert', BLOCKED: 'alert', COMPLETED: 'check' };
+    const ic = { STAGE_BUILD: 'activity', MENTION: 'chat', ISSUE: 'alert', NOTE: 'edit', RESOLVED: 'check', NOT_STARTED: 'clock', ASSIGNED: 'user', REASSIGNED: 'user', COMMENT: 'chat', REPLY: 'reply', DUE_SOON: 'clock', OVERDUE: 'alert', BLOCKED: 'alert', COMPLETED: 'check' };
     $('#notifPop').innerHTML = `<div class="head"><h3>Notifications</h3>${unread ? `<span class="tag">${unread} new</span><button class="btn btn-xs" data-action="markAllRead">Mark all read</button>` : ''}</div>
       ${desktopSupported() && Notification.permission !== 'granted' ? `<div class="notif-desktop">${icon('bell', 'ic-sm')}<span>${Notification.permission === 'denied' ? 'Desktop popups are blocked in this browser (allow via the 🔒 icon in the address bar).' : 'Get desktop popups for tags and new tasks.'}</span>${Notification.permission === 'default' ? '<button class="btn btn-xs btn-primary" data-action="enableDesktop">Turn on</button>' : ''}</div>` : ''}
-      <div class="notif-list">${ns.length ? ns.map((n) => `<div class="notif ${n.Read ? '' : 'unread'}" data-action="openNotification" data-id="${esc(n.NotificationID)}"><span class="udot"></span><span class="feed-ic ${/OVERDUE|BLOCKED|ISSUE/.test(n.Type) ? 'red' : /COMPLETED|RESOLVED/.test(n.Type) ? 'green' : /DUE_SOON|NOT_STARTED/.test(n.Type) ? 'amber' : /MENTION|NOTE/.test(n.Type) ? 'teal' : ''}">${icon(ic[n.Type] || 'bell')}</span>
+      <div class="notif-list">${ns.length ? ns.map((n) => `<div class="notif ${n.Read ? '' : 'unread'}" data-action="openNotification" data-id="${esc(n.NotificationID)}"><span class="udot"></span><span class="feed-ic ${/OVERDUE|BLOCKED|ISSUE/.test(n.Type) ? 'red' : /COMPLETED|RESOLVED/.test(n.Type) ? 'green' : /DUE_SOON|NOT_STARTED/.test(n.Type) ? 'amber' : /MENTION|NOTE|STAGE_BUILD/.test(n.Type) ? 'teal' : ''}">${icon(ic[n.Type] || 'bell')}</span>
         <div style="min-width:0"><div class="msg">${esc(n.Message)}</div><div class="time">${esc(relTime(n.CreatedAt))}</div></div></div>`).join('') : emptyState('bell', 'You are all caught up', 'Assignments, comments, replies and deadlines will show up here.')}</div>`;
   }
   async function markRead(ids, all) {
@@ -2181,7 +2182,7 @@
       const id = el.dataset.id, t = taskById(id);
       if (!t || !isAdmin()) return;
       const n = (S.data.commentStats[id] || {}).count || 0;
-      if (!(await confirmDialog({ title: `Delete ${id} permanently?`, message: `“${t.Title}”${n ? ` and its ${plural(n, 'comment')}` : ''} will be removed from the board for everyone. A recovery copy is kept in the DeletedTasks tab of the spreadsheet. Tip: use Archive if you only want to hide it.`, confirmText: 'Delete task', danger: true }))) return;
+      if (!(await confirmDialog({ title: 'Delete task', question: `Are you sure you want to delete ${id} “${t.Title}”?`, message: `“${t.Title}”${n ? ` and its ${plural(n, 'comment')}` : ''} will be removed from the board for everyone. A recovery copy is kept in the DeletedTasks tab of the spreadsheet. Tip: use Archive if you only want to hide it.`, cancelText: 'Cancel', confirmText: 'Yes, delete task', danger: true }))) return;
       try {
         await write('deleteTask', { id });
         S.data.tasks = S.data.tasks.filter((x) => x.TaskID !== id);
@@ -2212,7 +2213,7 @@
       catch (e) { el.disabled = false; showError(e, 'Not saved'); }
     },
     deleteComment: async (el) => {
-      if (!(await confirmDialog({ title: 'Delete comment?', message: 'The comment text will be removed for everyone. Replies stay visible. This cannot be undone.', confirmText: 'Delete', danger: true }))) return;
+      if (!(await confirmDialog({ title: 'Delete comment', question: 'Are you sure you want to delete this comment?', message: 'The comment text will be removed for everyone. Replies stay visible. This cannot be undone.', confirmText: 'Yes, delete comment', danger: true }))) return;
       try { const d = await write('deleteComment', { id: el.dataset.id }); S.drawer.detail.comments = d.comments; renderDrawer(); toast('Comment deleted'); }
       catch (e) { showError(e, 'Not deleted'); }
     },
@@ -2265,7 +2266,7 @@
     deleteUser: async (el) => {
       const u = user(el.dataset.email);
       const n = S.data.tasks.filter((t) => t.AssignedTo === u.Email && !t.Archived).length;
-      if (!(await confirmDialog({ title: `Delete ${u.Name}?`, message: `${u.Email} will be removed from the board and can no longer sign in${n ? `. Their ${plural(n, 'task')} will become TBD (unassigned)` : ''}. Comments and history are kept.`, confirmText: 'Delete user', danger: true }))) return;
+      if (!(await confirmDialog({ title: 'Delete user', question: `Are you sure you want to delete ${u.Name}?`, message: `${u.Email} will be removed from the board and can no longer sign in${n ? `. Their ${plural(n, 'task')} will become TBD (unassigned)` : ''}. Comments and history are kept.`, confirmText: 'Yes, delete user', danger: true }))) return;
       try { const r = await write('deleteUser', { email: u.Email }); S.data.users = S.data.users.filter((x) => x.Email !== u.Email); delete S.userMap[u.Email]; rerender(); toast(`${u.Name} deleted${r.unassigned ? ` · ${r.unassigned} tasks now TBD` : ''}`); }
       catch (e) { showError(e, 'Not deleted'); }
     },
