@@ -23,7 +23,7 @@
   const READ_ACTIONS = new Set(['bootstrap', 'sync', 'getTask', 'getActivity', 'ping', 'config']);
   const AUTH_ERRORS = new Set(['AUTH_EXPIRED', 'AUTH_REQUIRED', 'UNAUTHORIZED', 'AUTH_INVALID']);
   const PAGE_SIZES = [25, 50, 100];
-  const VERSION = '1.13.0'; // must match CONFIG.APP_VERSION in Code.gs
+  const VERSION = '1.14.0'; // must match CONFIG.APP_VERSION in Code.gs
 
   const defaultTaskFilter = () => ({ q: '', stage: '', meeting: '', team: '', status: '', priority: '', assignee: '', initiative: '', project: '', category: '', due: '', archived: false, sort: 'DueDate', dir: 1, page: 1, size: 25 });
 
@@ -139,7 +139,9 @@
   const isDueToday = (t) => OPEN(t.Status) && t.DueDate === today();
   function isDueThisWeek(t) { if (!OPEN(t.Status) || !t.DueDate) return false; const s = weekStart(today()); return t.DueDate >= s && t.DueDate <= addDays(s, 6); }
   function openDeps(t) { return list(t.DependsOn).map(taskById).filter((d) => d && OPEN(d.Status)); }
-  const effProgress = (t) => (t.Status === 'Completed' ? 100 : Number(t.Progress) || 0);
+  /** Progress follows the stage automatically: Parked 0 → Under design 33 → Build 67 → Live 100 (Done 100). */
+  const STAGE_PROGRESS = { Parked: 0, 'Under Design': 33, Build: 67, Live: 100, Done: 100 };
+  const effProgress = (t) => { const p = STAGE_PROGRESS[effStage(t)]; return p != null ? p : (t.Status === 'Completed' ? 100 : Number(t.Progress) || 0); };
 
   /** Initiative / project progress = average progress of linked, non-archived, non-cancelled tasks (Completed = 100%). */
   function rollup(tasks) {
@@ -917,7 +919,7 @@
           <td>${prioBadge(t.Priority)}</td>
           <td>${editable ? `<select class="select select-sm stage-select ss-${STAGE_INFO[effStage(t)].cls}" data-change="quickStage" data-id="${esc(t.TaskID)}" aria-label="Stage of ${esc(t.TaskID)}">${opts(TASK_STAGES.map((x) => ({ v: x, l: STAGE_INFO[x].label })), effStage(t))}</select>` : stagePill(effStage(t))}</td>
           <td>${dueCell(t)}</td>
-          <td class="c-prog" style="min-width:120px">${progressBar(effProgress(t), t.Status === 'Completed')}</td>
+          <td class="c-prog" style="min-width:120px">${progressBar(effProgress(t), effProgress(t) === 100)}</td>
           <td>${commentBadge(t)}</td>
           <td class="row-actions c-cat">${canCreateTask() ? `<button class="icon-btn sm" data-action="duplicateTask" data-id="${esc(t.TaskID)}" title="Duplicate" aria-label="Duplicate">${icon('copy', 'ic-sm')}</button>` : ''}${canArchiveTask(t) ? `<button class="icon-btn sm" data-action="archiveTask" data-id="${esc(t.TaskID)}" title="${t.Archived ? 'Restore' : 'Archive'}" aria-label="${t.Archived ? 'Restore' : 'Archive'}">${icon(t.Archived ? 'refresh' : 'archive', 'ic-sm')}</button>` : ''}${isAdmin() ? `<button class="icon-btn sm danger-btn" data-action="deleteTask" data-id="${esc(t.TaskID)}" title="Delete permanently" aria-label="Delete">${icon('trash', 'ic-sm')}</button>` : ''}</td>
         </tr>`;
@@ -1031,7 +1033,7 @@
         <div class="meta"><span class="idtag">${esc(t.TaskID)}</span><span class="right">${priPill(t.Priority)}</span></div>
         <div class="t">${esc(t.Title)}</div>
         ${t.Category || t.Meeting ? `<div class="meta">${t.Category ? `<span class="ctag">${esc(t.Category)}</span>` : ''}${t.Meeting ? `<span>${esc(t.Meeting)}</span>` : ''}</div>` : ''}
-        ${effStage(t) === 'Live' || effStage(t) === 'Build' ? progressBar(effProgress(t)) : ''}
+        ${progressBar(effProgress(t), effProgress(t) === 100)}
         <div class="meta">${avatar(t.AssignedTo, 'sm')}<span>${dueCell(t)}</span><span class="right">${commentBadge(t)}</span></div></div>`;
     };
     S.after = bindKanban;
@@ -1711,7 +1713,7 @@
           ${quick('Stage', 'Stage', editable ? `<select class="select stage-select ss-${STAGE_INFO[effStage(t)].cls}" data-change="drawerField" data-field="Stage">${opts(TASK_STAGES.map((x) => ({ v: x, l: STAGE_INFO[x].label })), effStage(t))}</select>` : stagePill(effStage(t)))}
           ${quick('Priority', 'Priority', editable ? `<select class="select" data-change="drawerField" data-field="Priority">${opts(PRI_OPTS, t.Priority)}</select>` : prioBadge(t.Priority))}
           ${quick('Assignee', 'AssignedTo', editable ? `<select class="select" data-change="drawerField" data-field="AssignedTo">${userOpts(t.AssignedTo)}</select>` : person(t.AssignedTo))}
-          ${quick('Progress', 'Progress', editable && effStage(t) !== 'Done' ? `<select class="select" data-change="drawerField" data-field="Progress">${opts([0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100].map((v) => ({ v, l: v + '%' })), Math.round(effProgress(t) / 10) * 10 === effProgress(t) ? effProgress(t) : '', Math.round(effProgress(t) / 10) * 10 === effProgress(t) ? undefined : effProgress(t) + '%')}</select>` : progressBar(effProgress(t), t.Status === 'Completed'))}
+          ${quick('Progress', 'Progress (auto from stage)', progressBar(effProgress(t), effProgress(t) === 100))}
         </div>
       </div>
       <div class="tabs" role="tablist">
@@ -1820,7 +1822,7 @@
     const t = taskById(id);
     if (!t) return;
     const before = Object.assign({}, t);
-    if (opt.optimistic) { Object.assign(t, patch); if (patch.Stage) t.Status = STAGE_TO_STATUS[patch.Stage]; if (t.Status === 'Completed') t.Progress = 100; renderView(); }
+    if (opt.optimistic) { Object.assign(t, patch); if (patch.Stage) { t.Status = STAGE_TO_STATUS[patch.Stage]; t.Progress = STAGE_PROGRESS[patch.Stage]; } if (t.Status === 'Completed') t.Progress = 100; renderView(); }
     try {
       const d = await write('saveTask', { id, version: before.Version, patch });
       upsert('tasks', d.task);
@@ -2021,7 +2023,6 @@
       { name: 'DueDate', label: 'Due date', type: 'date', hint: 'Leave blank if there is no deadline yet.' },
       { name: 'Stage', label: 'Stage', type: 'select', required: true, options: TASK_STAGES.map((x) => ({ v: x, l: STAGE_INFO[x].label })) },
       { name: 'Meeting', label: 'Review meeting', type: 'select', options: settingList('FORUMS'), placeholder: '— No meeting —' },
-      { name: 'Progress', label: 'Progress (%)', type: 'range', span: true },
       { name: 'Collaborators', label: 'Collaborators', type: 'checklist', options: activeUsers().map((u) => ({ v: u.Email, l: u.Name })), hint: 'They will be notified and can edit the task.' },
       { name: 'DependsOn', label: 'Depends on (task IDs)', placeholder: 'e.g. TSK-00012, TSK-00015', list: 'taskIdList', hint: 'Comma-separated. The task shows as waiting until these are completed.' },
       { name: 'Links', label: 'Supporting links', type: 'textarea', span: true, rows: 2, placeholder: 'https://… (one per line)', hint: 'Up to 10 http(s) links: documents, sheets, SOPs.' }
@@ -2036,7 +2037,7 @@
         if (v.Title && v.Title.length < 3) e.Title = 'At least 3 characters.';
         if (v.StartDate && v.DueDate && v.StartDate > v.DueDate) e.DueDate = 'Due date cannot be before the start date.';
         if (isNew && !v.DueDate && !['Parked', 'Under Design', 'Done'].includes(v.Stage)) e.DueDate = 'Please set a due date (optional for Parked / Under Design).';
-        if (v.Progress !== '' && (v.Progress < 0 || v.Progress > 100)) e.Progress = 'Between 0 and 100.';
+        
         const bad = String(v.Links || '').split('\n').map((l) => l.trim()).filter(Boolean).find((l) => !/^https?:\/\/\S+$/i.test(l));
         if (bad) e.Links = 'Not a valid link: ' + bad.slice(0, 50);
         const unknown = list(v.DependsOn).map((x) => x.toUpperCase()).find((x) => !S.data.tasks.some((y) => y.TaskID === x));
@@ -2045,7 +2046,6 @@
       },
       onChange: (name, v, form) => {
         if (name === 'AssignedTo' && v.AssignedTo && !v.Team) { const d = user(v.AssignedTo).Department; if (d) form.querySelector('[name="Team"]').value = d; }
-        if (name === 'Stage' && v.Stage === 'Done') { form.querySelector('[name="Progress"]').value = 100; const r = form.querySelector('input[type=range]'); if (r) r.value = 100; }
       },
       onSubmit: async (v) => {
         v.DependsOn = list(v.DependsOn).map((x) => x.toUpperCase()).join(', ');
