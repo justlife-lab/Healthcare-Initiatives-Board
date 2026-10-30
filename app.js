@@ -21,7 +21,7 @@
   const READ_ACTIONS = new Set(['bootstrap', 'sync', 'getTask', 'getActivity', 'ping', 'config']);
   const AUTH_ERRORS = new Set(['AUTH_EXPIRED', 'AUTH_REQUIRED', 'UNAUTHORIZED', 'AUTH_INVALID']);
   const PAGE_SIZES = [25, 50, 100];
-  const VERSION = '1.11.0'; // must match CONFIG.APP_VERSION in Code.gs
+  const VERSION = '1.12.0'; // must match CONFIG.APP_VERSION in Code.gs
 
   const defaultTaskFilter = () => ({ q: '', stage: '', meeting: '', team: '', status: '', priority: '', assignee: '', initiative: '', project: '', category: '', due: '', archived: false, sort: 'DueDate', dir: 1, page: 1, size: 25 });
 
@@ -527,7 +527,7 @@
     S.me = d.me;
     S.data = {
       tasks: d.tasks || [], initiatives: d.initiatives || [], projects: d.projects || [], users: d.users || [],
-      presence: d.presence || {}, commentStats: d.commentStats || {}, recentComments: d.recentComments || [], notifications: d.notifications || [],
+      presence: d.presence || {}, bulkUploadUrl: d.bulkUploadUrl || '', commentStats: d.commentStats || {}, recentComments: d.recentComments || [], notifications: d.notifications || [],
       activity: d.activity || [], settings: d.settings || {}
     };
     S.userMap = {};
@@ -1343,7 +1343,7 @@
   function renderSettings() {
     const tab = S.filters.settingsTab;
     const tabs = [['profile', 'My profile'], ['connection', 'Connection & data']];
-    if (isManager()) tabs.splice(1, 0, ['import', 'Import tasks']);
+    if (isManager()) tabs.splice(1, 0, ['import', 'Bulk upload']);
     if (isAdmin()) tabs.splice(1, 0, ['users', 'Users & roles'], ['config', 'Configuration']);
     else if (isManager()) tabs.splice(1, 0, ['users', 'Team members']);
     const t = tabs.some((x) => x[0] === tab) ? tab : 'profile';
@@ -1439,8 +1439,9 @@
     if (cell || row.length) { row.push(cell); rows.push(row); }
     return rows.map((r) => r.map((c) => c.trim())).filter((r) => r.some(Boolean));
   }
-  function mapImport(text) {
-    const grid = parseDelimited(text);
+  function mapImport(text) { return mapGrid(parseDelimited(text)); }
+  function mapGrid(grid) {
+    grid = (grid || []).map((r) => r.map((c) => (c instanceof Date ? c.toISOString().slice(0, 10) : String(c === null || c === undefined ? '' : c).trim()))).filter((r) => r.some(Boolean));
     if (!grid.length) return { rows: [], mapping: [] };
     const head = grid[0].map((h) => h.toLowerCase().replace(/[*:]/g, '').trim());
     let mapping = head.map((h) => Object.keys(IMPORT_COLS).find((k) => IMPORT_COLS[k].includes(h)) || '');
@@ -1450,21 +1451,99 @@
     return { rows, mapping };
   }
   async function importChunks(rows, dryRun) {
-    const size = 20, out = { dryRun, total: 0, importable: 0, imported: 0, results: [] };
+    const size = 20, out = { dryRun, total: 0, importable: 0, imported: 0, updated: 0, results: [] };
     for (let i = 0; i < rows.length; i += size) {
       const r = dryRun ? await api('importTasks', { rows: rows.slice(i, i + size), dryRun: true }) : await write('importTasks', { rows: rows.slice(i, i + size) });
-      out.total += r.total; out.importable += r.importable; out.imported += r.imported;
+      out.total += r.total; out.importable += r.importable; out.imported += r.imported; out.updated += r.updated || 0;
       r.results.forEach((x) => { x.row += i; out.results.push(x); });
     }
     return out;
   }
+  const TEMPLATE_HEAD = ['Title', 'Owner', 'Support', 'Team', 'Stage', 'Meeting', 'Category', 'Priority', 'Due date', 'Next step', 'Latest update'];
+  async function loadSheetJS() {
+    if (!window.XLSX) await loadScript('https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js');
+    return window.XLSX;
+  }
+  /** Excel template: "Tasks" sheet with headers + examples, a "Valid values" sheet and "How to use". */
+  async function downloadTemplate() {
+    let X;
+    try { X = await loadSheetJS(); } catch (e) { return downloadTemplateCsv(); }
+    const owners = activeUsers().map((u) => u.Name);
+    const ex = [
+      ['Clinic partnership – Mediclinic', owners[0] || 'Nitish', owners[1] || '', 'BD', 'Build', 'Team Weekly', 'Lab', 'P0', '2026-11-15', 'Agree pricing and sign MOU', 'Intro call done'],
+      ['Q4 brand video', owners[2] || 'Yana', '', 'Marketing', 'Under design', 'Taskforce', 'Others', 'P2', '', 'Write script and book shoot', '']
+    ];
+    const wb = X.utils.book_new();
+    const ws = X.utils.aoa_to_sheet([TEMPLATE_HEAD].concat(ex));
+    ws['!cols'] = [36, 16, 22, 12, 14, 14, 12, 9, 12, 44, 36].map((w) => ({ wch: w }));
+    X.utils.book_append_sheet(wb, ws, 'Tasks');
+    const cols = [owners.concat(['TBD']), settingList('DEPARTMENTS'), ['Live', 'Build', 'Under design', 'Parked', 'Done'], settingList('FORUMS'), settingList('CATEGORIES'), ['P0 (Critical)', 'P1 (High)', 'P2 (Medium)', 'P3 (Low)']];
+    const lists = [['Owner', 'Team', 'Stage', 'Meeting', 'Category', 'Priority']];
+    const n = Math.max(...cols.map((c) => c.length));
+    for (let i = 0; i < n; i++) lists.push(cols.map((c) => c[i] || ''));
+    const wl = X.utils.aoa_to_sheet(lists); wl['!cols'] = lists[0].map(() => ({ wch: 20 }));
+    X.utils.book_append_sheet(wb, wl, 'Valid values');
+    const how = [['How to use this template'], [''],
+      ['1. Fill one task per row on the "Tasks" sheet. Keep the header row exactly as it is. Delete the two example rows.'],
+      ['2. Title is required. Owner = a name from "Valid values" (or an email). Leave blank or write TBD for unassigned.'],
+      ['3. Support = other people helping, comma-separated. They become collaborators and are notified.'],
+      ['4. Stage: Live, Build, Under design, Parked or Done. Priority: P0, P1, P2 or P3.'],
+      ['5. Due date: 2026-11-15 or 15/11/2026 (optional).'],
+      ['6. Upload: board ▸ Settings ▸ Bulk upload ▸ Upload the filled template, check the preview, click Import.'],
+      ['   Or paste the rows into the BulkUpload tab of the Google Sheet — they are added automatically every 10 minutes.'],
+      ['7. A row with the same title and owner as an existing task is not duplicated (its stage / meeting is updated instead).']];
+    const wh = X.utils.aoa_to_sheet(how); wh['!cols'] = [{ wch: 110 }];
+    X.utils.book_append_sheet(wb, wh, 'How to use');
+    X.writeFile(wb, 'Bulk-task-upload-template.xlsx');
+    toast('Template downloaded');
+  }
+  function downloadTemplateCsv() {
+    const csv = [TEMPLATE_HEAD.join(','), '"Clinic partnership – Mediclinic",Nitish,Nazar,BD,Build,Team Weekly,Lab,P0,2026-11-15,Agree pricing and sign MOU,Intro call done'].join('\r\n');
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8' }));
+    a.download = 'Bulk-task-upload-template.csv'; document.body.appendChild(a); a.click(); a.remove();
+    toast('Template downloaded (CSV)');
+  }
+  async function readUploadFile(file) {
+    const name = file.name.toLowerCase();
+    if (/\.(csv|tsv|txt)$/.test(name)) return parseDelimited(await file.text());
+    const X = await loadSheetJS();
+    const wb = X.read(await file.arrayBuffer(), { type: 'array', cellDates: true });
+    const sheetName = wb.SheetNames.includes('Tasks') ? 'Tasks' : wb.SheetNames[0];
+    return X.utils.sheet_to_json(wb.Sheets[sheetName], { header: 1, raw: true, defval: '' });
+  }
+  async function handleUpload(f) {
+    try { toast(`Reading ${f.name}…`, 'warn', { timeout: 2000 }); const grid = await readUploadFile(f); await previewRows(mapGrid(grid).rows, f.name); if (S.importState.preview) toast(`${f.name}: ${S.importState.preview.total} rows ready to check`); }
+    catch (e) { showError(e, 'Could not read the file'); }
+  }
+  async function previewRows(rows, source) {
+    if (!rows.length) { toast('No rows with a Title found. Use the template header row.', 'warn'); return; }
+    S.importState.rows = rows; S.importState.source = source;
+    S.importState.preview = await importChunks(rows, true);
+    renderView();
+  }
+
   function importPanel() {
     const st = S.importState || (S.importState = { text: '', preview: null });
     const p = st.preview;
-    return `<div class="card"><div class="card-head"><h3>Import tasks</h3><span class="sub">Paste rows copied from Excel, Google Sheets or the old board</span></div><div class="card-body">
+    const url = S.data.bulkUploadUrl;
+    return `<div class="grid grid-2 mb-16">
+      <div class="card"><div class="card-head"><h3>1 · Download the template</h3></div><div class="card-body">
+        <p class="muted">Excel template with the right columns, two example rows, a <b>Valid values</b> sheet (owners, stages, meetings, priorities) and instructions.</p>
+        <div class="row mt-16"><button class="btn btn-primary" data-action="downloadTemplate">${icon('download')}Download template (.xlsx)</button><button class="btn btn-ghost btn-sm" data-action="downloadTemplateCsv">CSV version</button></div>
+        <p class="muted mt-8" style="font-size:12px">Columns: ${TEMPLATE_HEAD.join(' · ')}</p></div></div>
+      <div class="card"><div class="card-head"><h3>2 · Google Sheet upload (automatic)</h3></div><div class="card-body">
+        <p class="muted">Add rows to the <b>BulkUpload</b> tab of the Google Sheet (same columns, with dropdowns). New rows are added to the board <b>automatically every 10 minutes</b>, assigned to the owner with stage and due date. The <b>Result</b> column shows what happened to each row.</p>
+        <div class="row mt-16">${url ? `<a class="btn" href="${esc(url)}" target="_blank" rel="noopener">${icon('link')}Open BulkUpload sheet</a>` : '<span class="muted">Run setupHealthcareBoard once in Apps Script to create the BulkUpload tab.</span>'}<button class="btn btn-teal" data-action="processBulk">${icon('refresh')}Process now</button></div>
+        ${st.bulkMsg ? `<div class="alert alert-blue mt-16">${icon('check')}<div>${esc(st.bulkMsg)}</div></div>` : ''}</div></div>
+    </div>
+    <div class="card"><div class="card-head"><h3>3 · Upload the filled template, or paste rows</h3><span class="sub">Preview first — nothing is saved until you click Import</span></div><div class="card-body">
+      <div class="upload-drop" id="uploadDrop" data-action="pickFile"><input type="file" id="uploadFile" accept=".xlsx,.xls,.csv,.tsv,.txt" hidden data-change="uploadFile">
+        ${icon('download')}<div><b>Upload the filled template</b> (.xlsx or .csv)<div class="muted" style="font-size:12.5px">Click here or drag the file onto this box</div></div></div>
+      <div class="login-divider mt-16 mb-16">or paste rows copied from Excel / Google Sheets</div>
       <p class="muted">Include a header row. Recognised columns: <b>Title</b> (or Action), <b>Owner</b> (name or email — blank or "TBD" = unassigned), <b>Support</b> (collaborators), <b>Team</b> (${esc(settingList('DEPARTMENTS').join(' / '))}), <b>Stage</b> (Live / Build / Under design / Parked / Done), <b>Meeting</b>, <b>Priority</b> (P0–P3), <b>Due date</b>, Category, Status, Next step / Description, Latest update.
       Without a header the order is assumed to be: Title, Owner, Team, Stage, Priority, Due date, Meeting, Description.</p>
-      <textarea class="textarea mt-8" id="importText" rows="9" placeholder="Title&#9;Owner&#9;Team&#9;Status&#9;Priority&#9;Due date&#10;Hospital partnership — Mediclinic&#9;Nitish&#9;BD&#9;In progress&#9;High&#9;2026-11-15&#10;Q4 campaign brief&#9;Yana&#9;Marketing&#9;Not started&#9;Medium&#9;30/11/2026" data-input="importText">${esc(st.text)}</textarea>
+      <textarea class="textarea mt-8" id="importText" rows="5" placeholder="Title&#9;Owner&#9;Support&#9;Team&#9;Stage&#9;Meeting&#9;Category&#9;Priority&#9;Due date&#9;Next step&#10;Clinic partnership – Mediclinic&#9;Nitish&#9;Nazar&#9;BD&#9;Build&#9;Team Weekly&#9;Lab&#9;P0&#9;2026-11-15&#9;Agree pricing" data-input="importText">${esc(st.text)}</textarea>
       <div class="row mt-8"><button class="btn" data-action="importPreview">${icon('search')}Preview</button>${p && p.importable ? `<button class="btn btn-primary" data-action="importRun">${icon('download')}Import / update ${p.importable} task${p.importable === 1 ? '' : 's'}</button>` : ''}<span class="muted" style="font-size:12px">Nothing is saved until you click Import. Duplicate titles for the same owner are skipped.</span></div>
       ${p ? `<div class="mt-16 table-wrap"><table class="tbl"><thead><tr><th>#</th><th>Title</th><th>Owner</th><th>Team</th><th>Stage</th><th>Priority</th><th>Due</th><th>Meeting</th><th>Notes</th></tr></thead><tbody>
         ${p.results.map((r) => `<tr style="cursor:default" class="${r.ok || r.update ? '' : 'overdue'}"><td class="muted">${r.row}</td><td class="title-cell"><span class="t">${esc(r.task.Title)}</span>${r.task.TaskID ? `<span class="s">${esc(r.task.TaskID)}</span>` : ''}</td><td>${person(r.task.AssignedTo)}</td><td>${esc(r.task.Team || '—')}</td><td>${stagePill(r.task.Stage || 'Under Design')}</td><td>${priPill(r.task.Priority)}</td><td>${fmtDate(r.task.DueDate)}</td><td>${esc(r.task.Meeting || '—')}</td>
@@ -2217,20 +2296,26 @@
       try { const d = await write('deleteComment', { id: el.dataset.id }); S.drawer.detail.comments = d.comments; renderDrawer(); toast('Comment deleted'); }
       catch (e) { showError(e, 'Not deleted'); }
     },
+    downloadTemplate: () => downloadTemplate().catch((e) => showError(e, 'Template')),
+    downloadTemplateCsv: () => downloadTemplateCsv(),
+    pickFile: (el, e) => { if (e.target.id !== 'uploadFile') $('#uploadFile').click(); },
+    processBulk: async (el) => {
+      el.disabled = true; el.innerHTML = '<span class="spinner"></span>Processing…';
+      try { const r = await write('processBulkUpload', {}); S.importState.bulkMsg = r.message; toast(r.message, r.failed ? 'warn' : 'ok'); renderView(); }
+      catch (e) { showError(e, 'Bulk upload'); el.disabled = false; }
+    },
     importPreview: async (el) => {
       const text = $('#importText').value;
       S.importState.text = text;
-      const { rows } = mapImport(text);
-      if (!rows.length) return toast('No rows with a Title found. Paste rows including a header line.', 'warn');
       el.disabled = true;
-      try { S.importState.preview = await importChunks(rows, true); renderView(); }
+      try { await previewRows(mapImport(text).rows, 'paste'); }
       catch (e) { showError(e, 'Preview failed'); } finally { el.disabled = false; }
     },
     importRun: async (el) => {
-      const { rows } = mapImport(S.importState.text);
+      const rows = S.importState.rows || mapImport(S.importState.text).rows;
       if (!(await confirmDialog({ title: 'Import tasks?', message: `${S.importState.preview.importable} tasks will be created in Google Sheets and assignees will be notified.`, confirmText: 'Import' }))) return;
       el.disabled = true; el.innerHTML = '<span class="spinner"></span>Importing…';
-      try { const r = await importChunks(rows, false); S.importState.preview = r; S.importState.text = ''; toast(`${r.imported} imported${r.updated ? `, ${r.updated} updated` : ''}`); renderView(); }
+      try { const r = await importChunks(rows, false); S.importState.preview = r; S.importState.text = ''; S.importState.rows = null; toast(`${r.imported} imported${r.updated ? `, ${r.updated} updated` : ''}`); renderView(); }
       catch (e) { el.disabled = false; showError(e, 'Import failed'); }
     },
     stageTab: (el) => { const f = S.filters[el.dataset.scope]; f.stage = el.dataset.v; f.page = 1; renderView(); },
@@ -2321,6 +2406,7 @@
       try { const d = await write('saveUser', { email: u.Email, patch: { Role: role } }); upsert('users', d.user); toast(`${u.Name} is now ${role}`); rerender(); }
       catch (e) { el.value = u.Role; showError(e, 'Role not changed'); }
     },
+    uploadFile: async (el) => { const f = el.files && el.files[0]; el.value = ''; if (f) handleUpload(f); },
     quickStage: (el) => changeTaskField(el.dataset.id, { Stage: el.value }),
     drawerField: (el) => { const v = el.dataset.field === 'Progress' ? Number(el.value) : el.value; changeTaskField(S.drawer.id, { [el.dataset.field]: v }); },
     kanbanFilter: (el) => { S.filters.kanban[el.dataset.key] = el.value; renderView(); },
@@ -2337,7 +2423,7 @@
     iniSearch: (el) => { S.filters.ini.q = el.value; debounce(() => { $('#iniGroups').innerHTML = iniGroupsHtml(); }); },
     actSearch: (el) => { S.filters.act.q = el.value; debounce(() => { const pos = el.selectionStart; renderView(); const i = $('[data-input="actSearch"]'); if (i) { i.focus(); i.setSelectionRange(pos, pos); } }); },
     draft: (el) => { S.drafts[el.dataset.key] = el.value; },
-    importText: (el) => { if (S.importState) { S.importState.text = el.value; if (S.importState.preview) { S.importState.preview = null; const r = $('[data-action="importRun"]'); if (r) r.remove(); } } },
+    importText: (el) => { if (S.importState) { S.importState.text = el.value; S.importState.rows = null; if (S.importState.preview) { S.importState.preview = null; const r = $('[data-action="importRun"]'); if (r) r.remove(); } } },
     rangeSync: (el) => { const other = el.dataset.target.startsWith('r-') ? el.parentElement.querySelector('input[type=range]') : document.getElementById(el.dataset.target); if (other) other.value = el.value; }
   };
 
@@ -2398,6 +2484,9 @@
         fn(el, e);
       }
     });
+    document.addEventListener('dragover', (e) => { const d = e.target.closest && e.target.closest('#uploadDrop'); if (d) { e.preventDefault(); d.classList.add('over'); } });
+    document.addEventListener('dragleave', (e) => { const d = e.target.closest && e.target.closest('#uploadDrop'); if (d) d.classList.remove('over'); });
+    document.addEventListener('drop', (e) => { const d = e.target.closest && e.target.closest('#uploadDrop'); if (!d) return; e.preventDefault(); d.classList.remove('over'); const f = e.dataTransfer.files && e.dataTransfer.files[0]; if (f) handleUpload(f); });
     document.addEventListener('change', (e) => { const el = e.target.closest('[data-change]'); if (el && CHANGES[el.dataset.change]) CHANGES[el.dataset.change](el, e); });
     document.addEventListener('input', (e) => { const el = e.target.closest('[data-input]'); if (el && INPUTS[el.dataset.input]) INPUTS[el.dataset.input](el, e); });
     document.addEventListener('submit', async (e) => {
