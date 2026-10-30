@@ -665,3 +665,9 @@ table.tbl { width: 100%; border-collapse: collapse; }
 .stage-meta .stage-note { border: 0; padding: 0; }
 .stage-meta .chips { margin-left: auto; }
 @media (max-width: 900px) { .stage-tabs.six { grid-template-columns: repeat(3, minmax(0, 1fr)); } .stage-meta .chips { margin-left: 0; } }
+
+/* ---------- Overview: stage numbers ---------- */
+.stage-kpis { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; margin-bottom: 12px; }
+.stage-kpi .kpi-value { font-size: 32px; }
+@media (max-width: 900px) { .stage-kpis { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (max-width: 520px) { .stage-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); } }

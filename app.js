@@ -23,7 +23,7 @@
   const PAGE_SIZES = [25, 50, 100];
   const VERSION = '1.8.0'; // must match CONFIG.APP_VERSION in Code.gs
 
-  const defaultTaskFilter = () => ({ q: '', meeting: '', team: '', status: '', priority: '', assignee: '', initiative: '', project: '', category: '', due: '', archived: false, sort: 'DueDate', dir: 1, page: 1, size: 25 });
+  const defaultTaskFilter = () => ({ q: '', stage: '', meeting: '', team: '', status: '', priority: '', assignee: '', initiative: '', project: '', category: '', due: '', archived: false, sort: 'DueDate', dir: 1, page: 1, size: 25 });
 
   const S = {
     token: null, expiresAt: null, me: null, rev: null,
@@ -32,8 +32,8 @@
     filters: {
       all: defaultTaskFilter(),
       my: Object.assign(defaultTaskFilter(), { tab: 'assigned' }),
-      dash: { range: 'all', from: '', to: '', initiative: '', project: '', status: '', priority: '', assignee: '' },
-      kanban: { q: '', initiative: '', assignee: '', priority: '' },
+      dash: { range: 'all', from: '', to: '', stage: '', meeting: '', status: '', priority: '', assignee: '' },
+      kanban: { q: '', meeting: '', assignee: '', priority: '' },
       ini: { scope: 'all', group: 'Stage', forum: '', flag: '', q: '' },
       act: { tab: 'discussions', type: '', q: '' },
       mtg: { mode: 'status', stage: 'Live', meeting: '', q: '' },
@@ -600,7 +600,7 @@
     updateBanner();
     $('#versionInfo').textContent = 'v' + VERSION;
     setSync('ok', syncIdleText());
-    if (!location.hash) location.hash = '#/dashboard';
+    if (!location.hash) location.hash = '#/tasks';
     route(true);
     startPolling();
     setTimeout(askTeam, 400);
@@ -637,7 +637,7 @@
     if (!$('#notifPop').hidden) renderNotifications();
   }
 
-  const VIEW_TITLES = { meetings: 'Meeting board', dashboard: 'Overview', tasks: 'All tasks', my: 'My tasks', kanban: 'Kanban board', calendar: 'Calendar', initiatives: 'Initiatives', initiative: 'Initiative', projects: 'Projects', project: 'Project', activity: 'Discussions & activity', team: 'Team overview', settings: 'Settings' };
+  const VIEW_TITLES = { meetings: 'Meeting board', dashboard: 'Overview', tasks: 'Meeting board', my: 'My tasks', kanban: 'Kanban board', calendar: 'Calendar', initiatives: 'Initiatives', initiative: 'Initiative', projects: 'Projects', project: 'Project', activity: 'Discussions & activity', team: 'Team overview', settings: 'Settings' };
 
   function parseHash() {
     const h = location.hash.replace(/^#\/?/, '');
@@ -657,7 +657,8 @@
   function route(forceRender) {
     if (!S.me) return;
     const r = parseHash();
-    if (!VIEWS[r.view]) { location.hash = '#/dashboard'; return; }
+    if (['meetings', 'calendar', 'initiatives', 'initiative', 'projects', 'project'].includes(r.view)) { location.hash = '#/tasks'; return; } // removed pages
+    if (!VIEWS[r.view]) { location.hash = '#/tasks'; return; }
     const changed = forceRender || r.view !== S.route.view || r.id !== S.route.id;
     S.route = r;
     if (changed) { renderView(); window.scrollTo(0, 0); }
@@ -741,8 +742,8 @@
     const t0 = today(), ws = weekStart(t0);
     return S.data.tasks.filter((t) => {
       if (t.Archived) return false;
-      if (f.initiative && t.InitiativeID !== f.initiative) return false;
-      if (f.project && t.ProjectID !== f.project) return false;
+      if (f.stage && effStage(t) !== f.stage) return false;
+      if (f.meeting && t.Meeting !== f.meeting) return false;
       if (f.status && t.Status !== f.status) return false;
       if (f.priority && t.Priority !== f.priority) return false;
       if (!assigneeMatch(t, f.assignee)) return false;
@@ -798,10 +799,8 @@
     const overdueList = tasks.filter(isOverdue).sort((a, b) => a.DueDate.localeCompare(b.DueDate)).slice(0, 8);
     const attention = tasks.filter((t) => t.Status === 'Blocked' || t.Status === 'Under Review' || (OPEN(t.Status) && (openDeps(t).length || (S.data.commentStats[t.TaskID] || {}).openIssues)))
       .sort((a, b) => PRIORITIES.indexOf(a.Priority) - PRIORITIES.indexOf(b.Priority)).slice(0, 8);
-    const inis = S.data.initiatives.filter((i) => !i.Archived && (!f.initiative || i.InitiativeID === f.initiative))
-      .map((i) => Object.assign({ i }, initiativeStats(i.InitiativeID))).sort((a, b) => STAGES.indexOf(a.i.Stage) - STAGES.indexOf(b.i.Stage) || b.pct - a.pct);
 
-    const filtersActive = f.range !== 'all' || f.initiative || f.project || f.status || f.priority || f.assignee;
+    const filtersActive = f.range !== 'all' || f.stage || f.meeting || f.status || f.priority || f.assignee;
     return `
     <div class="view-head">
       <div><h2>Good ${greeting()}, ${esc(String(S.me.name).split(' ')[0])}</h2>
@@ -812,13 +811,16 @@
       <span class="lbl-inline">${icon('calendar', 'ic-sm')}</span>
       <select class="select" data-change="dash" data-key="range" aria-label="Due date range">${opts([{ v: 'all', l: 'All due dates' }, { v: 'week', l: 'Due this week' }, { v: 'month', l: 'Due this month' }, { v: 'next30', l: 'Due next 30 days' }, { v: 'last30', l: 'Due last 30 days' }, { v: 'custom', l: 'Custom range…' }], f.range)}</select>
       ${f.range === 'custom' ? `<input class="input" type="date" data-change="dash" data-key="from" value="${esc(f.from)}" aria-label="From"><input class="input" type="date" data-change="dash" data-key="to" value="${esc(f.to)}" aria-label="To">` : ''}
-      <select class="select" data-change="dash" data-key="initiative" aria-label="Initiative">${iniOpts(f.initiative, 'All initiatives')}</select>
-      <select class="select" data-change="dash" data-key="project" aria-label="Project">${prjOpts(f.project, 'All projects', f.initiative)}</select>
+      <select class="select" data-change="dash" data-key="stage" aria-label="Stage">${opts(TASK_STAGES.map((x) => ({ v: x, l: STAGE_INFO[x].label })), f.stage || '', 'All stages')}</select>
+      <select class="select" data-change="dash" data-key="meeting" aria-label="Meeting">${opts(settingList('FORUMS'), f.meeting || '', 'All meetings')}</select>
       <select class="select" data-change="dash" data-key="status" aria-label="Status">${opts(STATUSES, f.status, 'All statuses')}</select>
       <select class="select" data-change="dash" data-key="priority" aria-label="Priority">${opts(PRIORITIES, f.priority, 'All priorities')}</select>
       <select class="select" data-change="dash" data-key="assignee" aria-label="Assignee">${assigneeOpts(f.assignee, 'All assignees')}</select>
       ${filtersActive ? `<button class="btn btn-ghost btn-sm" data-action="resetDash">${icon('x', 'ic-sm')}Clear</button>` : ''}
     </div>
+    <div class="stage-kpis">${TASK_STAGES.map((st) => { const arr = tasks.filter((t) => effStage(t) === st && t.Status !== 'Cancelled'); const p0 = arr.filter((t) => t.Priority === 'Critical' && OPEN(t.Status)).length;
+      return `<button class="kpi stage-kpi" style="--kpi:${{ Live: '#16843A', Build: '#1B4079', 'Under Design': '#6D28D9', Parked: '#64748B', Done: '#0089C2' }[st]}" data-action="filterTasks" data-preset='${esc(JSON.stringify({ stage: st }))}'>
+        <span class="kpi-label">${stagePill(st)}</span><span class="kpi-value">${arr.length}</span><span class="kpi-foot">${p0 ? `<span class="p0">${p0} P0 open</span>` : esc(STAGE_INFO[st].note.split(' · ')[0])}</span></button>`; }).join('')}</div>
     <div class="kpis">
       ${kpi('Total tasks', k.total, '#1B4079', {}, 'Excludes archived', 'tasks')}
       ${kpi('Not started', k.ns, STATUS_COLORS['Not Started'], { status: 'Not Started' })}
@@ -831,24 +833,10 @@
       ${kpi('Assigned to me', k.mine, '#7C3AED', { assignee: me, status: 'open' }, 'Open tasks', 'user')}
     </div>
     <div class="grid grid-2">
-      <div class="card"><div class="card-head"><h3>Tasks by status</h3><span class="sub">${k.total} total</span></div><div class="card-body">
-        ${hbars(STATUSES.map((s) => ({ label: s, value: tasks.filter((t) => t.Status === s).length, color: STATUS_COLORS[s], action: `data-action="filterTasks" data-preset='${esc(JSON.stringify({ status: s }))}'` })))}</div></div>
-      <div class="card"><div class="card-head"><h3>Open tasks by priority</h3><span class="sub">${open.length} open</span></div><div class="card-body">
-        ${vbars(PRIORITIES.map((p) => ({ label: p, value: open.filter((t) => t.Priority === p).length, color: PRIORITY_COLORS[p], action: `data-action="filterTasks" data-preset='${esc(JSON.stringify({ priority: p, status: 'open' }))}'` })))}</div></div>
-    </div>
-    <div class="grid grid-2-1 mt-16">
-      <div class="card"><div class="card-head"><h3>Completion trend</h3><span class="sub">Tasks created vs completed per week (last 8 weeks)</span></div><div class="card-body">
-        ${lineChart(weeks.map((w) => fmtDate(w)), [{ name: 'Created', color: '#94A3B8', values: created, dash: true }, { name: 'Completed', color: '#0089C2', values: completed }])}</div></div>
-      <div class="card"><div class="card-head"><h3>Overdue tasks</h3><span class="sub">${k.overdue}</span>${k.overdue ? `<div class="actions"><button class="btn btn-sm btn-ghost" data-action="filterTasks" data-preset='${esc(JSON.stringify({ status: 'overdue' }))}'>View all</button></div>` : ''}</div>
-        <div class="card-body flush">${overdueList.length ? `<div class="list">${overdueList.map((t) => `<div class="list-item" data-action="openTask" data-id="${esc(t.TaskID)}">${avatar(t.AssignedTo, 'sm')}<div class="grow"><span class="t">${esc(t.Title)}</span><span class="s">${esc(t.TaskID)} · ${esc(uname(t.AssignedTo))}</span></div>${dueCell(t)}</div>`).join('')}</div>` : emptyState('check', 'Nothing overdue', 'Every open task is on schedule.')}</div></div>
-    </div>
-    <div class="grid grid-2 mt-16">
       <div class="card"><div class="card-head"><h3>Workload by team member</h3><span class="sub">Top ${workload.length}</span></div><div class="card-body">
         ${stackedBars(workload, [{ key: 'late', label: 'Overdue', color: '#DC2626' }, { key: 'open', label: 'Open', color: '#2556A0' }, { key: 'done', label: 'Completed', color: '#16A34A' }])}</div></div>
-      <div class="card"><div class="card-head"><h3>Initiative progress</h3><span class="sub">Average progress of linked tasks</span><div class="actions"><a class="btn btn-sm btn-ghost" href="#/initiatives">All initiatives</a></div></div>
-        <div class="card-body flush">${inis.length ? `<div class="list">${inis.slice(0, 8).map((x) => `<div class="list-item" data-action="go" data-href="#/initiatives/${esc(x.i.InitiativeID)}">
-          <div class="grow"><span class="t">${esc(x.i.Name)}</span><span class="s">${stageBadge(x.i.Stage)} &nbsp;${x.done}/${x.total} done${x.overdue ? ` · <span class="due-overdue">${x.overdue} overdue</span>` : ''}</span></div>
-          <div style="width:150px">${progressBar(x.pct, x.pct === 100)}</div></div>`).join('')}</div>` : emptyState('target', 'No initiatives yet', 'Create an initiative to track portfolio progress.')}</div></div>
+      <div class="card"><div class="card-head"><h3>Tasks by stage</h3><span class="sub">Live · Build · Under design · Parked · Done</span></div><div class="card-body">
+        ${hbars(TASK_STAGES.map((st) => ({ label: STAGE_INFO[st].label, value: tasks.filter((t) => effStage(t) === st).length, color: { Live: '#16843A', Build: '#1B4079', 'Under Design': '#6D28D9', Parked: '#64748B', Done: '#0089C2' }[st], action: `data-action="filterTasks" data-preset='${esc(JSON.stringify({ stage: st }))}'` })))}</div></div>
     </div>
     <div class="grid grid-2 mt-16">
       <div class="card"><div class="card-head"><h3>Blocked &amp; awaiting feedback</h3><span class="sub">${attention.length}</span></div>
@@ -879,12 +867,12 @@
       if (f.project && t.ProjectID !== f.project) return false;
       if (f.category && t.Category !== f.category) return false;
       if (f.meeting && (f.meeting === '__none__' ? t.Meeting : t.Meeting !== f.meeting)) return false;
+      if (f.stage && effStage(t) !== f.stage) return false;
       if (f.due === 'today' && !isDueToday(t)) return false;
       if (f.due === 'week' && !isDueThisWeek(t)) return false;
       if (f.due === 'next7' && !(OPEN(t.Status) && t.DueDate >= t0 && t.DueDate <= addDays(t0, 7))) return false;
       if (q) {
-        const ini = initiative(t.InitiativeID);
-        const hay = [t.TaskID, t.Title, t.Description, uname(t.AssignedTo), t.AssignedTo, ini ? ini.Name : '', t.Category, uname(t.CreatedBy)].join(' ').toLowerCase();
+        const hay = [t.TaskID, t.Title, t.Description, uname(t.AssignedTo), t.AssignedTo, t.Category, t.Meeting, effStage(t), uname(t.CreatedBy)].join(' ').toLowerCase();
         if (!hay.includes(q)) return false;
       }
       return true;
@@ -921,12 +909,11 @@
     return `<div class="table-wrap"><table class="tbl responsive">
       <thead><tr>${th('TaskID', 'ID', 'c-id')}${th('Title', 'Task')}${th('AssignedTo', 'Assignee')}${th('Priority', 'Priority')}${th('Status', 'Status')}${th('DueDate', 'Due')}${th('Progress', 'Progress', 'c-prog')}${th('Comments', '<span class="sr-only">Comments</span>' + icon('chat', 'ic-sm'))}<th class="c-cat"></th></tr></thead>
       <tbody>${pageRows.map((t) => {
-        const ini = initiative(t.InitiativeID);
         const editable = canEditTask(t) && !t.Archived;
         const deps = openDeps(t);
         return `<tr class="${isOverdue(t) ? 'overdue' : ''} ${t.Archived ? 'archived' : ''}" data-action="openTask" data-id="${esc(t.TaskID)}">
           <td class="c-id"><span class="idtag">${esc(t.TaskID)}</span></td>
-          <td class="title-cell"><span class="t">${esc(t.Title)}</span><span class="s">${ini ? esc(ini.Name) : esc(t.Category || 'No initiative')}${deps.length ? ` · <span class="tag tag-amber">Waiting on ${esc(deps[0].TaskID)}${deps.length > 1 ? ' +' + (deps.length - 1) : ''}</span>` : ''}${t.Archived ? ' · <span class="tag">Archived</span>' : ''}</span></td>
+          <td class="title-cell"><span class="t">${esc(t.Title)}</span><span class="s">${stagePill(effStage(t))} ${esc([t.Category, t.Meeting].filter(Boolean).join(' · '))}${deps.length ? ` · <span class="tag tag-amber">Waiting on ${esc(deps[0].TaskID)}${deps.length > 1 ? ' +' + (deps.length - 1) : ''}</span>` : ''}${t.Archived ? ' · <span class="tag">Archived</span>' : ''}</span></td>
           <td>${person(t.AssignedTo)}</td>
           <td>${prioBadge(t.Priority)}</td>
           <td>${editable ? `<select class="select select-sm" data-change="quickStatus" data-id="${esc(t.TaskID)}" aria-label="Status of ${esc(t.TaskID)}">${opts(STATUSES, t.Status)}</select>` : statusBadge(t.Status)}</td>
@@ -946,14 +933,13 @@
 
   function taskFilterBar(f, scope, opt) {
     opt = opt || {};
-    const any = f.q || f.meeting || f.team || f.status || f.priority || f.assignee || f.initiative || f.project || f.category || f.due || f.archived;
+    const any = f.q || f.stage || f.meeting || f.team || f.status || f.priority || f.assignee || f.initiative || f.project || f.category || f.due || f.archived;
     return `<div class="filters" role="group" aria-label="Task filters">
       <input class="input grow" type="search" placeholder="Search by title, ID, description or owner…" value="${esc(f.q)}" data-input="taskFilter" data-scope="${scope}" data-key="q" aria-label="Search tasks">
       <select class="select" data-change="taskFilter" data-scope="${scope}" data-key="status" aria-label="Status">${opts([{ v: 'open', l: 'All open' }, { v: 'overdue', l: 'Overdue' }].concat(STATUSES), f.status, 'All statuses')}</select>
       <select class="select" data-change="taskFilter" data-scope="${scope}" data-key="priority" aria-label="Priority">${opts([{ v: 'high+', l: 'Critical + High' }].concat(PRIORITIES), f.priority, 'All priorities')}</select>
       ${opt.noAssignee ? '' : `<select class="select" data-change="taskFilter" data-scope="${scope}" data-key="assignee" aria-label="Assignee">${assigneeOpts(f.assignee, 'All assignees')}</select>`}
-      <select class="select" data-change="taskFilter" data-scope="${scope}" data-key="initiative" aria-label="Initiative">${iniOpts(f.initiative, 'All initiatives')}</select>
-      <select class="select" data-change="taskFilter" data-scope="${scope}" data-key="project" aria-label="Project">${prjOpts(f.project, 'All projects', f.initiative)}</select>
+
       <select class="select" data-change="taskFilter" data-scope="${scope}" data-key="meeting" aria-label="Meeting">${opts(settingList('FORUMS').concat([{ v: '__none__', l: 'No meeting' }]), f.meeting, 'All meetings')}</select>
       <select class="select" data-change="taskFilter" data-scope="${scope}" data-key="category" aria-label="Category">${opts(settingList('CATEGORIES'), f.category, 'All categories')}</select>
       <select class="select" data-change="taskFilter" data-scope="${scope}" data-key="due" aria-label="Due">${opts([{ v: 'today', l: 'Due today' }, { v: 'week', l: 'Due this week' }, { v: 'next7', l: 'Due in next 7 days' }], f.due, 'Any due date')}</select>
@@ -966,11 +952,25 @@
     const f = S.filters.all;
     const rows = filterTasks(f, S.data.tasks);
     const live = S.data.tasks.filter((t) => !t.Archived);
-    return `<div class="view-head"><div><h2>All tasks</h2><p class="sub">${plural(live.length, 'task')} · ${live.filter((t) => OPEN(t.Status)).length} open · ${live.filter(isOverdue).length} overdue</p></div>
-      <div class="actions"><button class="btn" data-action="exportCsv" data-scope="all">${icon('download')}Export CSV</button>${canCreateTask() ? `<button class="btn btn-primary" data-action="newTask">${icon('plus')}New task</button>` : ''}</div></div>
+    return `<div class="view-head"><div><h2>Meeting board</h2><p class="sub">${plural(live.length, 'task')} · ${live.filter((t) => OPEN(t.Status)).length} open · ${live.filter(isOverdue).length} overdue · ${live.filter((t) => OPEN(t.Status) && t.Priority === 'Critical').length} P0 open</p></div>
+      <div class="actions"><button class="btn" data-action="exportCsv" data-scope="all">${icon('download')}Export CSV</button>${canCreateTask() ? `<button class="btn btn-primary" data-action="newTask" data-stage="${esc(f.stage)}" data-meeting="${esc(f.meeting === '__none__' ? '' : f.meeting)}">${icon('plus')}New task</button>` : ''}</div></div>
+      ${stageBar(f, 'all')}
       ${ownerChips(f)}
       ${taskFilterBar(f, 'all')}
       <div class="card" id="tableArea">${taskTable(rows, f, 'all')}</div>`;
+  }
+
+  /** Stage tabs (All · Live · Build · Under design · Parked · Done) with counts and P0s, plus meeting buttons. Counts respect the other filters. */
+  function stageBar(f, scope) {
+    const base = filterTasks(Object.assign({}, f, { stage: '' }), scope === 'my' ? myBase(f.tab) : S.data.tasks);
+    const p0 = (arr) => arr.filter((t) => t.Priority === 'Critical' && OPEN(t.Status)).length;
+    const tab = (key, label, arr, cls) => `<button class="stage-tab st-${cls} ${f.stage === key ? 'on' : ''}" data-action="stageTab" data-scope="${scope}" data-v="${esc(key)}">${esc(label)} <span class="n">${arr.length}</span>${p0(arr) ? `<span class="p0">• ${p0(arr)} P0</span>` : ''}</button>`;
+    const forums = settingList('FORUMS');
+    return `<div class="stage-wrap">
+      <div class="stage-tabs six">${tab('', 'All', base, 'all')}${TASK_STAGES.map((st) => tab(st, STAGE_INFO[st].label, base.filter((t) => effStage(t) === st), STAGE_INFO[st].cls)).join('')}</div>
+      <div class="stage-meta"><span class="stage-note">${f.stage ? esc(STAGE_INFO[f.stage].note) : 'All stages'}</span>
+        <div class="chips"><button class="chip ${!f.meeting ? 'on' : ''}" data-action="meetingChip" data-scope="${scope}" data-v="">All meetings</button>${forums.map((m) => `<button class="chip ${f.meeting === m ? 'on' : ''}" data-action="meetingChip" data-scope="${scope}" data-v="${esc(m)}">${esc(m)}</button>`).join('')}</div></div>
+    </div>`;
   }
 
   /** Team rows of owner chips (e.g. "BD · All 32 | Nitish 9 | … | TBD 4"). Counts = open, non-archived tasks. */
@@ -1024,31 +1024,43 @@
     const f = S.filters.kanban;
     const q = f.q.trim().toLowerCase();
     const tasks = S.data.tasks.filter((t) => !t.Archived &&
-      (!f.initiative || t.InitiativeID === f.initiative) && assigneeMatch(t, f.assignee) && (!f.priority || t.Priority === f.priority) &&
+      (!f.meeting || t.Meeting === f.meeting) && assigneeMatch(t, f.assignee) && (!f.priority || t.Priority === f.priority) &&
       (!q || (t.TaskID + ' ' + t.Title + ' ' + uname(t.AssignedTo)).toLowerCase().includes(q)));
     const card = (t) => {
       const draggable = canEditTask(t);
       return `<div class="kcard ${isOverdue(t) ? 'overdue' : ''}" data-action="openTask" data-id="${esc(t.TaskID)}" ${draggable ? 'draggable="true"' : ''} tabindex="0" aria-label="${esc(t.Title)}">
-        <div class="meta"><span class="idtag">${esc(t.TaskID)}</span><span class="right">${prioBadge(t.Priority)}</span></div>
+        <div class="meta"><span class="idtag">${esc(t.TaskID)}</span><span class="right">${statusBadge(t.Status)}${priPill(t.Priority)}</span></div>
         <div class="t">${esc(t.Title)}</div>
-        ${t.InitiativeID ? `<div class="meta">${icon('target', 'ic-sm')}${esc((initiative(t.InitiativeID) || {}).Name || '')}</div>` : ''}
+        ${t.Category || t.Meeting ? `<div class="meta">${t.Category ? `<span class="ctag">${esc(t.Category)}</span>` : ''}${t.Meeting ? `<span>${esc(t.Meeting)}</span>` : ''}</div>` : ''}
         ${t.Status === 'In Progress' || t.Status === 'Under Review' ? progressBar(effProgress(t)) : ''}
         <div class="meta">${avatar(t.AssignedTo, 'sm')}<span>${dueCell(t)}</span><span class="right">${commentBadge(t)}</span></div></div>`;
     };
     S.after = bindKanban;
-    return `<div class="view-head"><div><h2>Kanban board</h2><p class="sub">Drag a card to another column to change its status. Changes save to Google Sheets immediately.</p></div>
+    return `<div class="view-head"><div><h2>Kanban board</h2><p class="sub">Drag a card to another column to change its stage. Changes save to Google Sheets immediately.</p></div>
       <div class="actions">${canCreateTask() ? `<button class="btn btn-primary" data-action="newTask">${icon('plus')}New task</button>` : ''}</div></div>
       <div class="filters">
         <input class="input grow" type="search" placeholder="Filter cards…" value="${esc(f.q)}" data-input="kanbanFilter" data-key="q" aria-label="Filter cards">
-        <select class="select" data-change="kanbanFilter" data-key="initiative" aria-label="Initiative">${iniOpts(f.initiative, 'All initiatives')}</select>
+        <select class="select" data-change="kanbanFilter" data-key="meeting" aria-label="Meeting">${opts(settingList('FORUMS'), f.meeting || '', 'All meetings')}</select>
         <select class="select" data-change="kanbanFilter" data-key="assignee" aria-label="Assignee">${assigneeOpts(f.assignee, 'All assignees')}</select>
         <select class="select" data-change="kanbanFilter" data-key="priority" aria-label="Priority">${opts(PRIORITIES, f.priority, 'All priorities')}</select>
       </div>
-      <div class="board" id="board">${STATUSES.map((s) => {
-        const items = tasks.filter((t) => t.Status === s).sort((a, b) => PRIORITIES.indexOf(a.Priority) - PRIORITIES.indexOf(b.Priority) || (a.DueDate || '9').localeCompare(b.DueDate || '9'));
-        return `<section class="col" aria-label="${esc(s)}"><div class="col-head"><span class="dot" style="background:${STATUS_COLORS[s]}"></span>${esc(s)}<span class="n">${items.length}</span></div>
+      <div class="board" id="board">${TASK_STAGES.map((s) => {
+        const items = tasks.filter((t) => effStage(t) === s && t.Status !== 'Cancelled').sort((a, b) => PRIORITIES.indexOf(a.Priority) - PRIORITIES.indexOf(b.Priority) || (a.DueDate || '9').localeCompare(b.DueDate || '9'));
+        const p0 = items.filter((t) => t.Priority === 'Critical' && OPEN(t.Status)).length;
+        return `<section class="col" aria-label="${esc(STAGE_INFO[s].label)}"><div class="col-head"><span class="dot" style="background:${{ Live: '#16843A', Build: '#1B4079', 'Under Design': '#6D28D9', Parked: '#64748B', Done: '#0089C2' }[s]}"></span>${esc(STAGE_INFO[s].label)}<span class="n">${items.length}</span>${p0 ? `<span class="p0">• ${p0} P0</span>` : ''}</div>
           <div class="col-body" data-status="${esc(s)}">${items.map(card).join('') || '<div class="faint" style="text-align:center;padding:16px 0;font-size:12px">No tasks</div>'}</div></section>`;
       }).join('')}</div>`;
+  }
+
+  /** Moving a card between stage columns also keeps the task status consistent (Done ⇄ Completed). */
+  function moveToStage(id, stage) {
+    const t = taskById(id);
+    if (!t || effStage(t) === stage) return;
+    const patch = { Stage: stage };
+    if (stage === 'Done') patch.Status = 'Completed';
+    else if (t.Status === 'Completed' || t.Status === 'Cancelled') patch.Status = (stage === 'Live' || stage === 'Build') ? 'In Progress' : 'Not Started';
+    else if ((stage === 'Live' || stage === 'Build') && t.Status === 'Not Started') patch.Status = 'In Progress';
+    changeTaskField(id, patch, { optimistic: true });
   }
 
   function bindKanban() {
@@ -1060,7 +1072,7 @@
     $$('.col-body').forEach((col) => {
       col.addEventListener('dragover', (e) => { if (!dragId) return; e.preventDefault(); col.classList.add('drop'); });
       col.addEventListener('dragleave', (e) => { if (!col.contains(e.relatedTarget)) col.classList.remove('drop'); });
-      col.addEventListener('drop', (e) => { e.preventDefault(); col.classList.remove('drop'); const id = dragId || e.dataTransfer.getData('text/plain'); dragId = null; if (id) changeTaskField(id, { Status: col.dataset.status }, { optimistic: true }); });
+      col.addEventListener('drop', (e) => { e.preventDefault(); col.classList.remove('drop'); const id = dragId || e.dataTransfer.getData('text/plain'); dragId = null; if (id) moveToStage(id, col.dataset.status); });
     });
   }
 
@@ -1285,8 +1297,6 @@
   }
   function entityLink(a) {
     if (a.EntityType === 'Task') return `<a href="javascript:void 0" data-action="openTask" data-id="${esc(a.EntityID)}">${esc(a.EntityID)}</a>`;
-    if (a.EntityType === 'Initiative') return `<a href="#/initiatives/${esc(a.EntityID)}">${esc(a.EntityID)}</a>`;
-    if (a.EntityType === 'Project') return `<a href="#/projects/${esc(a.EntityID)}">${esc(a.EntityID)}</a>`;
     return esc(a.EntityID);
   }
   function feedHtml(items) {
@@ -1303,7 +1313,7 @@
     return `<div class="view-head"><div><h2>Discussions &amp; activity</h2><p class="sub">Latest comments, replies and audit trail across the board</p></div></div>
       <div class="tabs">${[['discussions', 'Discussions', S.data.recentComments.length], ['log', 'Activity log', S.data.activity.length]].map(([k, l, n]) => `<button class="${f.tab === k ? 'on' : ''}" data-action="actTab" data-tab="${k}">${l}<span class="pill-count">${n}</span></button>`).join('')}</div>
       <div class="filters"><input class="input grow" type="search" placeholder="Search ${f.tab === 'log' ? 'activity' : 'discussions'}…" value="${esc(f.q)}" data-input="actSearch" aria-label="Search">
-        ${f.tab === 'log' ? `<select class="select" data-change="actType" aria-label="Entity type">${opts(['Task', 'Initiative', 'Project', 'Comment', 'User', 'Settings'], f.type, 'All record types')}</select>` : ''}</div>
+        ${f.tab === 'log' ? `<select class="select" data-change="actType" aria-label="Entity type">${opts(['Task', 'Comment', 'User', 'Settings'], f.type, 'All record types')}</select>` : ''}</div>
       <div class="card" id="actArea">${f.tab === 'log' ? feedHtml(acts) : (comments.length ? `<div class="feed">${comments.map(commentFeedItem).join('')}</div>` : emptyState('chat', 'No discussions yet', 'Open any task and add a comment to start a discussion.'))}</div>
       <p class="muted mt-8" style="font-size:12px">Showing the most recent ${S.data.activity.length} log entries and ${S.data.recentComments.length} comments. The full history is kept in the ActivityLog and Comments sheets.</p>`;
   }
@@ -1413,7 +1423,6 @@
     Priority: ['priority', 'prio', 'pri', 'importance'],
     DueDate: ['due', 'due date', 'deadline', 'target', 'target date', 'eta', 'end date'],
     StartDate: ['start', 'start date', 'started'],
-    Initiative: ['initiative', 'project', 'workstream', 'program'],
     Category: ['category', 'type', 'area'],
     Description: ['description', 'notes', 'details', 'comment', 'comments', 'next step', 'next steps'],
     Collaborators: ['support', 'collaborators', 'supporting', 'helpers'],
@@ -1421,7 +1430,7 @@
     Progress: ['progress', '%', 'percent', '% complete'],
     Links: ['link', 'links', 'url', 'doc']
   };
-  const DEFAULT_ORDER = ['Title', 'Owner', 'Team', 'Status', 'Priority', 'DueDate', 'Initiative', 'Description'];
+  const DEFAULT_ORDER = ['Title', 'Owner', 'Team', 'Stage', 'Priority', 'DueDate', 'Meeting', 'Description'];
   function parseDelimited(text) {
     const delim = text.includes('\t') ? '\t' : ',';
     const rows = []; let row = [], cell = '', q = false;
@@ -1459,12 +1468,12 @@
     const st = S.importState || (S.importState = { text: '', preview: null });
     const p = st.preview;
     return `<div class="card"><div class="card-head"><h3>Import tasks</h3><span class="sub">Paste rows copied from Excel, Google Sheets or the old board</span></div><div class="card-body">
-      <p class="muted">Include a header row. Recognised columns: <b>Title</b>, <b>Owner</b> (name or email — blank or "TBD" = unassigned), <b>Team</b> (${esc(settingList('DEPARTMENTS').join(' / '))}), <b>Status</b>, <b>Priority</b>, <b>Due date</b>, Start date, Initiative, Category, Description, Progress, Links.
-      Without a header the order is assumed to be: Title, Owner, Team, Status, Priority, Due date, Initiative, Description.</p>
+      <p class="muted">Include a header row. Recognised columns: <b>Title</b> (or Action), <b>Owner</b> (name or email — blank or "TBD" = unassigned), <b>Support</b> (collaborators), <b>Team</b> (${esc(settingList('DEPARTMENTS').join(' / '))}), <b>Stage</b> (Live / Build / Under design / Parked / Done), <b>Meeting</b>, <b>Priority</b> (P0–P3), <b>Due date</b>, Category, Status, Next step / Description, Latest update.
+      Without a header the order is assumed to be: Title, Owner, Team, Stage, Priority, Due date, Meeting, Description.</p>
       <textarea class="textarea mt-8" id="importText" rows="9" placeholder="Title&#9;Owner&#9;Team&#9;Status&#9;Priority&#9;Due date&#10;Hospital partnership — Mediclinic&#9;Nitish&#9;BD&#9;In progress&#9;High&#9;2026-11-15&#10;Q4 campaign brief&#9;Yana&#9;Marketing&#9;Not started&#9;Medium&#9;30/11/2026" data-input="importText">${esc(st.text)}</textarea>
       <div class="row mt-8"><button class="btn" data-action="importPreview">${icon('search')}Preview</button>${p && p.importable ? `<button class="btn btn-primary" data-action="importRun">${icon('download')}Import / update ${p.importable} task${p.importable === 1 ? '' : 's'}</button>` : ''}<span class="muted" style="font-size:12px">Nothing is saved until you click Import. Duplicate titles for the same owner are skipped.</span></div>
-      ${p ? `<div class="mt-16 table-wrap"><table class="tbl"><thead><tr><th>#</th><th>Title</th><th>Owner</th><th>Team</th><th>Status</th><th>Priority</th><th>Due</th><th>Initiative</th><th>Notes</th></tr></thead><tbody>
-        ${p.results.map((r) => `<tr style="cursor:default" class="${r.ok || r.update ? '' : 'overdue'}"><td class="muted">${r.row}</td><td class="title-cell"><span class="t">${esc(r.task.Title)}</span>${r.task.TaskID ? `<span class="s">${esc(r.task.TaskID)}</span>` : ''}</td><td>${person(r.task.AssignedTo)}</td><td>${esc(r.task.Team || '—')}</td><td>${statusBadge(r.task.Status)}</td><td>${prioBadge(r.task.Priority)}</td><td>${fmtDate(r.task.DueDate)}</td><td>${esc(r.task.Initiative || '—')}</td>
+      ${p ? `<div class="mt-16 table-wrap"><table class="tbl"><thead><tr><th>#</th><th>Title</th><th>Owner</th><th>Team</th><th>Status</th><th>Priority</th><th>Due</th><th>Stage · Meeting</th><th>Notes</th></tr></thead><tbody>
+        ${p.results.map((r) => `<tr style="cursor:default" class="${r.ok || r.update ? '' : 'overdue'}"><td class="muted">${r.row}</td><td class="title-cell"><span class="t">${esc(r.task.Title)}</span>${r.task.TaskID ? `<span class="s">${esc(r.task.TaskID)}</span>` : ''}</td><td>${person(r.task.AssignedTo)}</td><td>${esc(r.task.Team || '—')}</td><td>${statusBadge(r.task.Status)}</td><td>${prioBadge(r.task.Priority)}</td><td>${fmtDate(r.task.DueDate)}</td><td>${r.task.Stage ? stagePill(r.task.Stage) : '—'} ${esc(r.task.Meeting || '')}</td>
         <td style="font-size:12px">${r.ok ? '' : `<span class="${r.update ? 'muted' : 'due-overdue'}">${esc(r.error)}</span><br>`}${r.warnings.map((w) => `<span class="muted">${esc(w)}</span>`).join('<br>')}</td></tr>`).join('')}
         </tbody></table></div><p class="mt-8 muted">${p.dryRun ? `${p.importable} of ${p.total} rows ready to import.` : `<b>${p.imported} tasks imported${p.updated ? `, ${p.updated} existing tasks updated` : ''}.</b>`}</p>` : ''}
     </div></div>`;
@@ -1545,7 +1554,7 @@
       <p class="muted mt-16" style="font-size:12.5px">Click any row to update status, owner, due date or notes. Changes save to Google Sheets for everyone.</p>`;
   }
 
-  const VIEWS = { meetings: renderMeetings, dashboard: renderDashboard, tasks: renderAllTasks, my: renderMyTasks, kanban: renderKanban, calendar: renderCalendar, initiatives: renderInitiatives, initiative: renderInitiativeDetail, projects: renderProjects, project: renderProjectDetail, activity: renderActivity, team: renderTeam, settings: renderSettings };
+  const VIEWS = { dashboard: renderDashboard, tasks: renderAllTasks, my: renderMyTasks, kanban: renderKanban, activity: renderActivity, team: renderTeam, settings: renderSettings };
 
   /* ------------------------------------------------------------------
    *  Task drawer (details, threaded discussion, activity)
@@ -1650,7 +1659,6 @@
 
   function drawerDetails(t) {
     const dr = S.drawer;
-    const ini = initiative(t.InitiativeID), prj = project(t.ProjectID);
     const deps = dr.detail ? dr.detail.dependencies : list(t.DependsOn).map((id) => { const x = taskById(id); return { TaskID: id, Title: x ? x.Title : '', Status: x ? x.Status : '' }; });
     const dependents = dr.detail ? dr.detail.dependents : [];
     const openD = deps.filter((d) => OPEN(d.Status));
@@ -1665,8 +1673,6 @@
     return `${alerts.join('')}
       <div class="desc prewrap">${t.Description ? linkify(esc(t.Description)) : '<span class="muted">No description.</span>'}</div>
       <dl class="meta-grid">
-        <dt>Initiative</dt><dd>${ini ? `<a href="#/initiatives/${esc(ini.InitiativeID)}">${esc(ini.Name)}</a>` : '<span class="faint">—</span>'}</dd>
-        <dt>Project</dt><dd>${prj ? `<a href="#/projects/${esc(prj.ProjectID)}">${esc(prj.Name)}</a>` : '<span class="faint">—</span>'}</dd>
         <dt>Stage</dt><dd>${stagePill(effStage(t))}</dd>
         <dt>Meeting</dt><dd>${esc(t.Meeting || '—')}</dd>
         <dt>Category</dt><dd>${esc(t.Category || '—')}</dd>
@@ -1941,8 +1947,6 @@
     const fields = [
       { name: 'Title', label: 'Title', required: true, span: true, max: 200, placeholder: 'e.g. Finalise nurse onboarding checklist' },
       { name: 'Description', label: 'Description', type: 'textarea', span: true, rows: 4, hint: 'Context, acceptance criteria, decisions. Do not include patient information.' },
-      { name: 'InitiativeID', label: 'Initiative', type: 'select', options: S.data.initiatives.filter((i) => !i.Archived || i.InitiativeID === values.InitiativeID).map((i) => ({ v: i.InitiativeID, l: i.Name })), placeholder: '— None —' },
-      { name: 'ProjectID', label: 'Project', type: 'select', options: S.data.projects.filter((p) => !p.Archived && (!values.InitiativeID || !p.InitiativeID || p.InitiativeID === values.InitiativeID)).map((p) => ({ v: p.ProjectID, l: p.Name })), placeholder: '— None —' },
       { name: 'Category', label: 'Category / department', type: 'select', options: settingList('CATEGORIES'), placeholder: '— Select —' },
       { name: 'Team', label: 'Team', type: 'select', options: settingList('DEPARTMENTS'), placeholder: '— From assignee —' },
       { name: 'AssignedTo', label: 'Assigned to', type: 'select', options: activeUsers().map((u) => ({ v: u.Email, l: u.Name + (u.Department ? ' · ' + u.Department : '') })), placeholder: 'TBD — not assigned yet' },
@@ -1975,15 +1979,6 @@
         return e;
       },
       onChange: (name, v, form) => {
-        if (name === 'InitiativeID') {
-          const sel = form.querySelector('[name="ProjectID"]');
-          const cur = sel.value;
-          sel.innerHTML = prjOpts(cur, '— None —', v.InitiativeID);
-        }
-        if (name === 'ProjectID' && v.ProjectID) {
-          const p = project(v.ProjectID);
-          if (p && p.InitiativeID) form.querySelector('[name="InitiativeID"]').value = p.InitiativeID;
-        }
         if (name === 'AssignedTo' && v.AssignedTo && !v.Team) { const d = user(v.AssignedTo).Department; if (d) form.querySelector('[name="Team"]').value = d; }
         if (name === 'Status' && v.Status === 'Completed') { form.querySelector('[name="Progress"]').value = 100; const r = form.querySelector('input[type=range]'); if (r) r.value = 100; }
       },
@@ -2135,8 +2130,6 @@
       const hay = (t.TaskID + ' ' + t.Title + ' ' + t.Description + ' ' + uname(t.AssignedTo)).toLowerCase();
       if (hay.includes(q)) out.push({ score: t.TaskID.toLowerCase() === q ? 0 : t.Title.toLowerCase().includes(q) ? 1 : 2, html: `${statusBadge(t.Status)}<span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"><b>${esc(t.TaskID)}</b> ${esc(t.Title)}</span><span class="sr-kind">${esc(uname(t.AssignedTo))}</span>`, act: () => navTask(t.TaskID) });
     });
-    S.data.initiatives.forEach((i) => { if (!i.Archived && (i.InitiativeID + ' ' + i.Name + ' ' + i.Objective).toLowerCase().includes(q)) out.push({ score: 1, html: `${icon('target')}<span><b>${esc(i.Name)}</b></span><span class="sr-kind">Initiative</span>`, act: () => go('#/initiatives/' + i.InitiativeID) }); });
-    S.data.projects.forEach((p) => { if (!p.Archived && (p.ProjectID + ' ' + p.Name).toLowerCase().includes(q)) out.push({ score: 1, html: `${icon('folder')}<span><b>${esc(p.Name)}</b></span><span class="sr-kind">Project</span>`, act: () => go('#/projects/' + p.ProjectID) }); });
     activeUsers().forEach((u) => { if ((u.Name + ' ' + u.Email).toLowerCase().includes(q)) out.push({ score: 2, html: `${avatar(u.Email, 'sm')}<span><b>${esc(u.Name)}</b></span><span class="sr-kind">Person · open tasks</span>`, act: () => applyTaskPreset({ assignee: u.Email, status: 'open' }) }); });
     return out.sort((a, b) => a.score - b.score).slice(0, 10);
   }
@@ -2168,7 +2161,7 @@
   function exportCsv(scope) {
     const f = S.filters[scope];
     const rows = sortTasks(filterTasks(f, scope === 'my' ? myBase(f.tab) : S.data.tasks), f.sort, f.dir);
-    const cols = ['TaskID', 'Title', 'Status', 'Priority', 'AssignedTo', 'Collaborators', 'InitiativeID', 'ProjectID', 'Category', 'StartDate', 'DueDate', 'CompletedDate', 'Progress', 'CreatedBy', 'CreatedAt', 'UpdatedAt'];
+    const cols = ['TaskID', 'Title', 'Stage', 'Meeting', 'Status', 'Priority', 'AssignedTo', 'Collaborators', 'Team', 'Category', 'StartDate', 'DueDate', 'CompletedDate', 'Progress', 'CreatedBy', 'CreatedAt', 'UpdatedAt'];
     const cell = (v) => { let s = String(v === null || v === undefined ? '' : v); if (/^[=+\-@]/.test(s)) s = "'" + s; return '"' + s.replace(/"/g, '""') + '"'; };
     const csv = [cols.join(',')].concat(rows.map((t) => cols.map((c) => cell(t[c])).join(','))).join('\r\n');
     const a = document.createElement('a');
@@ -2247,10 +2240,12 @@
       try { const r = await importChunks(rows, false); S.importState.preview = r; S.importState.text = ''; toast(`${r.imported} imported${r.updated ? `, ${r.updated} updated` : ''}`); renderView(); }
       catch (e) { el.disabled = false; showError(e, 'Import failed'); }
     },
+    stageTab: (el) => { const f = S.filters[el.dataset.scope]; f.stage = el.dataset.v; f.page = 1; renderView(); },
+    meetingChip: (el) => { const f = S.filters[el.dataset.scope]; f.meeting = el.dataset.v; f.page = 1; renderView(); },
     ownerChip: (el) => { const p = JSON.parse(el.dataset.preset); const f = S.filters.all; const same = f.team === p.team && (f.assignee || '') === (p.assignee || ''); Object.assign(f, { team: same ? '' : p.team, assignee: same ? '' : (p.assignee || ''), page: 1 }); renderView(); },
     kpi: (el) => applyTaskPreset(Object.assign(dashCarry(), JSON.parse(el.dataset.preset || '{}'))),
     filterTasks: (el) => applyTaskPreset(Object.assign(S.route.view === 'dashboard' ? dashCarry() : {}, JSON.parse(el.dataset.preset || '{}'))),
-    resetDash: () => { S.filters.dash = { range: 'all', from: '', to: '', initiative: '', project: '', status: '', priority: '', assignee: '' }; renderView(); },
+    resetDash: () => { S.filters.dash = { range: 'all', from: '', to: '', stage: '', meeting: '', status: '', priority: '', assignee: '' }; renderView(); },
     sort: (el) => { const f = S.filters[el.dataset.scope]; if (f.sort === el.dataset.key) f.dir = -f.dir; else { f.sort = el.dataset.key; f.dir = 1; } refreshTable(el.dataset.scope); },
     page: (el) => { const f = S.filters[el.dataset.scope]; f.page += Number(el.dataset.dir); refreshTable(el.dataset.scope); $('#tableArea').scrollIntoView({ block: 'start', behavior: 'smooth' }); },
     resetTaskFilter: (el) => { const s = el.dataset.scope; const keep = s === 'my' ? { tab: S.filters.my.tab } : {}; S.filters[s] = Object.assign(defaultTaskFilter(), keep); renderView(); },
@@ -2308,7 +2303,7 @@
     retryLogin: () => showLogin()
   };
   function rerenderChromeOnly() { if (S.route.view === 'tasks' || S.route.view === 'my') refreshTable(S.route.view === 'my' ? 'my' : 'all'); }
-  function dashCarry() { const f = S.filters.dash; const o = {}; ['initiative', 'project', 'priority', 'assignee'].forEach((k) => { if (f[k]) o[k] = f[k]; }); if (f.status) o.status = f.status; return o; }
+  function dashCarry() { const f = S.filters.dash; const o = {}; ['stage', 'meeting', 'priority', 'assignee'].forEach((k) => { if (f[k]) o[k] = f[k]; }); if (f.status) o.status = f.status; return o; }
 
   async function archiveOwned(kind, action, rec, key, label) {
     if (!rec) return;
