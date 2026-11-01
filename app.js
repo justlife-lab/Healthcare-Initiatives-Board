@@ -23,7 +23,7 @@
   const READ_ACTIONS = new Set(['bootstrap', 'sync', 'getTask', 'getActivity', 'ping', 'config']);
   const AUTH_ERRORS = new Set(['AUTH_EXPIRED', 'AUTH_REQUIRED', 'UNAUTHORIZED', 'AUTH_INVALID']);
   const PAGE_SIZES = [25, 50, 100];
-  const VERSION = '1.14.0'; // must match CONFIG.APP_VERSION in Code.gs
+  const VERSION = '1.15.0'; // must match CONFIG.APP_VERSION in Code.gs
 
   const defaultTaskFilter = () => ({ q: '', stage: '', meeting: '', team: '', status: '', priority: '', assignee: '', initiative: '', project: '', category: '', due: '', archived: false, sort: 'DueDate', dir: 1, page: 1, size: 25 });
 
@@ -139,6 +139,13 @@
   const isDueToday = (t) => OPEN(t.Status) && t.DueDate === today();
   function isDueThisWeek(t) { if (!OPEN(t.Status) || !t.DueDate) return false; const s = weekStart(today()); return t.DueDate >= s && t.DueDate <= addDays(s, 6); }
   function openDeps(t) { return list(t.DependsOn).map(taskById).filter((d) => d && OPEN(d.Status)); }
+  /** Subtasks (max 3) are stored as lines "[ ] text" / "[x] text" in the task's Subtasks column. */
+  const MAX_SUBTASKS = 3;
+  function parseSubs(v) {
+    return String(v || '').split(/\r?\n/).map((l) => { const m = l.trim().match(/^(?:[-*•]\s*)?\[( |x|X|✓)?\]\s*(.*)$/); return m ? { title: m[2].trim(), done: !!m[1] && m[1] !== ' ' } : { title: l.trim(), done: false }; }).filter((x) => x.title);
+  }
+  const fmtSubs = (arr) => arr.map((x) => (x.done ? '[x] ' : '[ ] ') + x.title).join('\n');
+  const subChip = (t) => { const s = parseSubs(t.Subtasks); if (!s.length) return ''; const d = s.filter((x) => x.done).length; return `<span class="sub-chip ${d === s.length ? 'all' : ''}" title="Subtasks done">${icon('check', 'ic-sm')}${d}/${s.length}</span>`; };
   /** Progress follows the stage automatically: Parked 0 → Under design 33 → Build 67 → Live 100 (Done 100). */
   const STAGE_PROGRESS = { Parked: 0, 'Under Design': 33, Build: 67, Live: 100, Done: 100 };
   const effProgress = (t) => { const p = STAGE_PROGRESS[effStage(t)]; return p != null ? p : (t.Status === 'Completed' ? 100 : Number(t.Progress) || 0); };
@@ -914,7 +921,7 @@
         const deps = openDeps(t);
         return `<tr class="${isOverdue(t) ? 'overdue' : ''} ${t.Archived ? 'archived' : ''}" data-action="openTask" data-id="${esc(t.TaskID)}">
           <td class="c-id"><span class="idtag">${esc(t.TaskID)}</span></td>
-          <td class="title-cell"><span class="t">${esc(t.Title)}</span><span class="s">${esc([t.Category, t.Meeting].filter(Boolean).join(' · ') || '—')}${deps.length ? ` · <span class="tag tag-amber">Waiting on ${esc(deps[0].TaskID)}${deps.length > 1 ? ' +' + (deps.length - 1) : ''}</span>` : ''}${t.Archived ? ' · <span class="tag">Archived</span>' : ''}</span></td>
+          <td class="title-cell"><span class="t">${esc(t.Title)}${subChip(t)}</span><span class="s">${esc([t.Category, t.Meeting].filter(Boolean).join(' · ') || '—')}${deps.length ? ` · <span class="tag tag-amber">Waiting on ${esc(deps[0].TaskID)}${deps.length > 1 ? ' +' + (deps.length - 1) : ''}</span>` : ''}${t.Archived ? ' · <span class="tag">Archived</span>' : ''}</span></td>
           <td>${person(t.AssignedTo)}</td>
           <td>${prioBadge(t.Priority)}</td>
           <td>${editable ? `<select class="select select-sm stage-select ss-${STAGE_INFO[effStage(t)].cls}" data-change="quickStage" data-id="${esc(t.TaskID)}" aria-label="Stage of ${esc(t.TaskID)}">${opts(TASK_STAGES.map((x) => ({ v: x, l: STAGE_INFO[x].label })), effStage(t))}</select>` : stagePill(effStage(t))}</td>
@@ -1032,6 +1039,7 @@
       return `<div class="kcard ${isOverdue(t) ? 'overdue' : ''}" data-action="openTask" data-id="${esc(t.TaskID)}" ${draggable ? 'draggable="true"' : ''} tabindex="0" aria-label="${esc(t.Title)}">
         <div class="meta"><span class="idtag">${esc(t.TaskID)}</span><span class="right">${priPill(t.Priority)}</span></div>
         <div class="t">${esc(t.Title)}</div>
+        ${parseSubs(t.Subtasks).length ? `<ul class="ksubs">${parseSubs(t.Subtasks).map((x) => `<li class="${x.done ? 'done' : ''}"><i></i>${esc(x.title)}</li>`).join('')}</ul>` : ''}
         ${t.Category || t.Meeting ? `<div class="meta">${t.Category ? `<span class="ctag">${esc(t.Category)}</span>` : ''}${t.Meeting ? `<span>${esc(t.Meeting)}</span>` : ''}</div>` : ''}
         ${progressBar(effProgress(t), effProgress(t) === 100)}
         <div class="meta">${avatar(t.AssignedTo, 'sm')}<span>${dueCell(t)}</span><span class="right">${commentBadge(t)}</span></div></div>`;
@@ -1426,7 +1434,11 @@
     Collaborators: ['support', 'collaborators', 'supporting', 'helpers'],
     Update: ['update', 'latest update', 'status update'],
     Progress: ['progress', '%', 'percent', '% complete'],
-    Links: ['link', 'links', 'url', 'doc']
+    Links: ['link', 'links', 'url', 'doc'],
+    Subtasks: ['subtasks', 'sub tasks', 'sub-tasks'],
+    Sub1: ['subtask 1', 'subtask1', 'sub-task 1', 'sub task 1'],
+    Sub2: ['subtask 2', 'subtask2', 'sub-task 2', 'sub task 2'],
+    Sub3: ['subtask 3', 'subtask3', 'sub-task 3', 'sub task 3']
   };
   const DEFAULT_ORDER = ['Title', 'Owner', 'Team', 'Stage', 'Priority', 'DueDate', 'Meeting', 'Description'];
   function parseDelimited(text) {
@@ -1451,7 +1463,7 @@
     let mapping = head.map((h) => Object.keys(IMPORT_COLS).find((k) => IMPORT_COLS[k].includes(h)) || '');
     let body = grid.slice(1);
     if (!mapping.includes('Title')) { mapping = grid[0].map((_, i) => DEFAULT_ORDER[i] || ''); body = grid; }
-    const rows = body.map((r) => { const o = {}; mapping.forEach((k, i) => { if (k && r[i] !== undefined && !o[k]) o[k] = r[i]; }); if (o.Update) { o.Description = (o.Description ? o.Description + '\n' : '') + 'Latest update: ' + o.Update; delete o.Update; } if (o.Description) o.Description = o.Description.split(' | ').join('\n'); return o; }).filter((o) => o.Title);
+    const rows = body.map((r) => { const o = {}; mapping.forEach((k, i) => { if (k && r[i] !== undefined && !o[k]) o[k] = r[i]; }); if (o.Update) { o.Description = (o.Description ? o.Description + '\n' : '') + 'Latest update: ' + o.Update; delete o.Update; } if (o.Description) o.Description = o.Description.split(' | ').join('\n'); const sb = [o.Sub1, o.Sub2, o.Sub3].filter(Boolean); if (sb.length && !o.Subtasks) o.Subtasks = sb.map((x) => '[ ] ' + x).join('\n'); delete o.Sub1; delete o.Sub2; delete o.Sub3; return o; }).filter((o) => o.Title);
     return { rows, mapping };
   }
   async function importChunks(rows, dryRun) {
@@ -1463,7 +1475,7 @@
     }
     return out;
   }
-  const TEMPLATE_HEAD = ['Title', 'Owner', 'Support', 'Team', 'Stage', 'Meeting', 'Category', 'Priority', 'Due date', 'Next step', 'Latest update'];
+  const TEMPLATE_HEAD = ['Title', 'Owner', 'Support', 'Team', 'Stage', 'Meeting', 'Category', 'Priority', 'Due date', 'Next step', 'Latest update', 'Subtask 1', 'Subtask 2', 'Subtask 3'];
   async function loadSheetJS() {
     if (!window.XLSX) await loadScript('https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js');
     return window.XLSX;
@@ -1474,12 +1486,12 @@
     try { X = await loadSheetJS(); } catch (e) { return downloadTemplateCsv(); }
     const owners = activeUsers().map((u) => u.Name);
     const ex = [
-      ['Clinic partnership – Mediclinic', owners[0] || 'Nitish', owners[1] || '', 'BD', 'Build', 'Team Weekly', 'Lab', 'P0', '2026-11-15', 'Agree pricing and sign MOU', 'Intro call done'],
-      ['Q4 brand video', owners[2] || 'Yana', '', 'Marketing', 'Under design', 'Taskforce', 'Others', 'P2', '', 'Write script and book shoot', '']
+      ['Clinic partnership – Mediclinic', owners[0] || 'Nitish', owners[1] || '', 'BD', 'Build', 'Team Weekly', 'Lab', 'P0', '2026-11-15', 'Agree pricing and sign MOU', 'Intro call done', 'Share price list', 'Legal review of MOU', 'Sign MOU'],
+      ['Q4 brand video', owners[2] || 'Yana', '', 'Marketing', 'Under design', 'Taskforce', 'Others', 'P2', '', 'Write script and book shoot', '', 'Write script', 'Book studio', '']
     ];
     const wb = X.utils.book_new();
     const ws = X.utils.aoa_to_sheet([TEMPLATE_HEAD].concat(ex));
-    ws['!cols'] = [36, 16, 22, 12, 14, 14, 12, 9, 12, 44, 36].map((w) => ({ wch: w }));
+    ws['!cols'] = [36, 16, 22, 12, 14, 14, 12, 9, 12, 44, 36, 26, 26, 26].map((w) => ({ wch: w }));
     X.utils.book_append_sheet(wb, ws, 'Tasks');
     const cols = [owners.concat(['TBD']), settingList('DEPARTMENTS'), ['Live', 'Build', 'Under design', 'Parked', 'Done'], settingList('FORUMS'), settingList('CATEGORIES'), ['P0 (Critical)', 'P1 (High)', 'P2 (Medium)', 'P3 (Low)']];
     const lists = [['Owner', 'Team', 'Stage', 'Meeting', 'Category', 'Priority']];
@@ -1493,6 +1505,7 @@
       ['3. Support = other people helping, comma-separated. They become collaborators and are notified.'],
       ['4. Stage: Live, Build, Under design, Parked or Done. Priority: P0, P1, P2 or P3.'],
       ['5. Due date: 2026-11-15 or 15/11/2026 (optional).'],
+      ['   Subtask 1, Subtask 2, Subtask 3: up to 3 subtasks per task (optional). Leave empty if there are none.'],
       ['6. Upload: board ▸ Settings ▸ Bulk upload ▸ Upload the filled template, check the preview, click Import.'],
       ['7. A row with the same title and owner as an existing task is not duplicated (its stage / meeting is updated instead).']];
     const wh = X.utils.aoa_to_sheet(how); wh['!cols'] = [{ wch: 110 }];
@@ -1501,7 +1514,7 @@
     toast('Template downloaded');
   }
   function downloadTemplateCsv() {
-    const csv = [TEMPLATE_HEAD.join(','), '"Clinic partnership – Mediclinic",Nitish,Nazar,BD,Build,Team Weekly,Lab,P0,2026-11-15,Agree pricing and sign MOU,Intro call done'].join('\r\n');
+    const csv = [TEMPLATE_HEAD.join(','), '"Clinic partnership – Mediclinic",Nitish,Nazar,BD,Build,Team Weekly,Lab,P0,2026-11-15,Agree pricing and sign MOU,Intro call done,Share price list,Legal review of MOU,Sign MOU'].join('\r\n');
     const a = document.createElement('a');
     a.href = URL.createObjectURL(new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8' }));
     a.download = 'Bulk-task-upload-template.csv'; document.body.appendChild(a); a.click(); a.remove();
@@ -1542,7 +1555,7 @@
       <textarea class="textarea mt-8" id="importText" rows="5" placeholder="Title&#9;Owner&#9;Support&#9;Team&#9;Stage&#9;Meeting&#9;Category&#9;Priority&#9;Due date&#9;Next step&#10;Clinic partnership – Mediclinic&#9;Nitish&#9;Nazar&#9;BD&#9;Build&#9;Team Weekly&#9;Lab&#9;P0&#9;2026-11-15&#9;Agree pricing" data-input="importText">${esc(st.text)}</textarea>
       <div class="row mt-8"><button class="btn" data-action="importPreview">${icon('search')}Preview</button>${p && p.importable ? `<button class="btn btn-primary" data-action="importRun">${icon('download')}Import / update ${p.importable} task${p.importable === 1 ? '' : 's'}</button>` : ''}<span class="muted" style="font-size:12px">Nothing is saved until you click Import. Duplicate titles for the same owner are skipped.</span></div>
       ${p ? `<div class="mt-16 table-wrap"><table class="tbl"><thead><tr><th>#</th><th>Title</th><th>Owner</th><th>Team</th><th>Stage</th><th>Priority</th><th>Due</th><th>Meeting</th><th>Notes</th></tr></thead><tbody>
-        ${p.results.map((r) => `<tr style="cursor:default" class="${r.ok || r.update ? '' : 'overdue'}"><td class="muted">${r.row}</td><td class="title-cell"><span class="t">${esc(r.task.Title)}</span>${r.task.TaskID ? `<span class="s">${esc(r.task.TaskID)}</span>` : ''}</td><td>${person(r.task.AssignedTo)}</td><td>${esc(r.task.Team || '—')}</td><td>${stagePill(r.task.Stage || 'Under Design')}</td><td>${priPill(r.task.Priority)}</td><td>${fmtDate(r.task.DueDate)}</td><td>${esc(r.task.Meeting || '—')}</td>
+        ${p.results.map((r) => `<tr style="cursor:default" class="${r.ok || r.update ? '' : 'overdue'}"><td class="muted">${r.row}</td><td class="title-cell"><span class="t">${esc(r.task.Title)}</span>${r.task.Subtasks ? `<span class="s">Subtasks: ${esc(parseSubs(r.task.Subtasks).map((x) => x.title).join(' · '))}</span>` : ''}${r.task.TaskID ? `<span class="s">${esc(r.task.TaskID)}</span>` : ''}</td><td>${person(r.task.AssignedTo)}</td><td>${esc(r.task.Team || '—')}</td><td>${stagePill(r.task.Stage || 'Under Design')}</td><td>${priPill(r.task.Priority)}</td><td>${fmtDate(r.task.DueDate)}</td><td>${esc(r.task.Meeting || '—')}</td>
         <td style="font-size:12px">${r.ok ? '' : `<span class="${r.update ? 'muted' : 'due-overdue'}">${esc(r.error)}</span><br>`}${r.warnings.map((w) => `<span class="muted">${esc(w)}</span>`).join('<br>')}</td></tr>`).join('')}
         </tbody></table></div><p class="mt-8 muted">${p.dryRun ? `${p.importable} of ${p.total} rows ready to import.` : `<b>${p.imported} tasks imported${p.updated ? `, ${p.updated} existing tasks updated` : ''}.</b>`}</p>` : ''}
     </div></div>`;
@@ -1583,7 +1596,7 @@
     return `<div class="table-wrap"><table class="tbl atbl"><thead><tr><th style="width:110px">Status</th><th>Action</th><th>Category</th><th>Owner</th><th>Due</th><th style="text-align:right">Pri</th></tr></thead><tbody>
       ${sorted.map((t) => { const sub = String(t.Description || '').split('\n')[0]; const oi = (S.data.commentStats[t.TaskID] || {}).openIssues; return `<tr class="${isOverdue(t) ? 'overdue' : ''}" data-action="openTask" data-id="${esc(t.TaskID)}">
         <td>${stagePill(effStage(t))}</td>
-        <td class="title-cell"><span class="t">${esc(t.Title)}${oi ? ` <span class="issue-pill">${icon('alert', 'ic-sm')}${oi}</span>` : ''}</span><span class="s">${esc(sub.length > 120 ? sub.slice(0, 119) + '…' : sub) || (t.Meeting ? esc(t.Meeting) : '&nbsp;')}</span></td>
+        <td class="title-cell"><span class="t">${esc(t.Title)}${subChip(t)}${oi ? ` <span class="issue-pill">${icon('alert', 'ic-sm')}${oi}</span>` : ''}</span><span class="s">${esc(sub.length > 120 ? sub.slice(0, 119) + '…' : sub) || (t.Meeting ? esc(t.Meeting) : '&nbsp;')}</span></td>
         <td>${t.Category ? `<span class="ctag">${esc(t.Category)}</span>` : '<span class="faint">—</span>'}</td>
         <td>${person(t.AssignedTo)}</td>
         <td class="mono">${t.DueDate ? dueCell(t) : '<span class="faint">–</span>'}</td>
@@ -1715,6 +1728,7 @@
           ${quick('Assignee', 'AssignedTo', editable ? `<select class="select" data-change="drawerField" data-field="AssignedTo">${userOpts(t.AssignedTo)}</select>` : person(t.AssignedTo))}
           ${quick('Progress', 'Progress (auto from stage)', progressBar(effProgress(t), effProgress(t) === 100))}
         </div>
+        ${drawerSubtasks(t, editable)}
       </div>
       <div class="tabs" role="tablist">
         <button role="tab" class="${dr.tab === 'discussion' ? 'on' : ''}" data-action="drawerTab" data-tab="discussion">Discussion<span class="pill-count">${cCount}</span></button>
@@ -1727,6 +1741,19 @@
       </div>`;
     renderDrawerStaleHint();
   }
+
+  function drawerSubtasks(t, editable) {
+    const subs = parseSubs(t.Subtasks);
+    if (!subs.length && !editable) return '';
+    const done = subs.filter((x) => x.done).length;
+    return `<div class="subtasks"><div class="sub-head"><b>Subtasks</b><span class="muted">${subs.length ? `${done} of ${subs.length} done` : `Add up to ${MAX_SUBTASKS}`}</span></div>
+      ${subs.map((x, i) => `<div class="sub-row ${x.done ? 'done' : ''}">
+        <label class="check"><input type="checkbox" ${x.done ? 'checked' : ''} ${editable ? '' : 'disabled'} data-change="subToggle" data-i="${i}"><span>${esc(x.title)}</span></label>
+        ${editable ? `<button class="icon-btn sm" data-action="subDelete" data-i="${i}" title="Remove subtask" aria-label="Remove subtask">${icon('x', 'ic-sm')}</button>` : ''}</div>`).join('')}
+      ${editable && subs.length < MAX_SUBTASKS ? `<div class="sub-add"><input class="input" id="subNew" maxlength="200" placeholder="Add a subtask (${subs.length + 1} of ${MAX_SUBTASKS}) and press Enter"><button class="btn btn-sm" data-action="subAdd">${icon('plus', 'ic-sm')}Add</button></div>` : ''}
+    </div>`;
+  }
+  function saveSubs(arr) { const id = S.drawer.id; changeTaskField(id, { Subtasks: fmtSubs(arr) }, { optimistic: true }); }
 
   function drawerDetails(t) {
     const dr = S.drawer;
@@ -2025,8 +2052,13 @@
       { name: 'Meeting', label: 'Review meeting', type: 'select', options: settingList('FORUMS'), placeholder: '— No meeting —' },
       { name: 'Collaborators', label: 'Collaborators', type: 'checklist', options: activeUsers().map((u) => ({ v: u.Email, l: u.Name })), hint: 'They will be notified and can edit the task.' },
       { name: 'DependsOn', label: 'Depends on (task IDs)', placeholder: 'e.g. TSK-00012, TSK-00015', list: 'taskIdList', hint: 'Comma-separated. The task shows as waiting until these are completed.' },
+      { name: 'Sub1', label: 'Subtask 1', max: 200, placeholder: 'Optional' },
+      { name: 'Sub2', label: 'Subtask 2', max: 200, placeholder: 'Optional' },
+      { name: 'Sub3', label: 'Subtask 3', max: 200, placeholder: 'Optional', span: true },
       { name: 'Links', label: 'Supporting links', type: 'textarea', span: true, rows: 2, placeholder: 'https://… (one per line)', hint: 'Up to 10 http(s) links: documents, sheets, SOPs.' }
     ];
+    const oldSubs = parseSubs(values.Subtasks);
+    oldSubs.forEach((x, i) => { values['Sub' + (i + 1)] = x.title; });
     openForm({
       title: isNew ? 'New task' : `Edit ${t.TaskID}`, values, fields,
       submitText: isNew ? 'Create task' : 'Save changes',
@@ -2049,6 +2081,8 @@
       },
       onSubmit: async (v) => {
         v.DependsOn = list(v.DependsOn).map((x) => x.toUpperCase()).join(', ');
+        v.Subtasks = fmtSubs(['Sub1', 'Sub2', 'Sub3'].map((k) => String(v[k] || '').trim()).filter(Boolean).map((title) => ({ title, done: (oldSubs.find((o) => o.title === title) || {}).done || false })));
+        delete v.Sub1; delete v.Sub2; delete v.Sub3;
         const patch = isNew ? v : changedOnly(Object.assign({}, t, { Progress: effProgress(t) }), v);
         if (!isNew && !Object.keys(patch).length) { toast('No changes to save.', 'warn'); return; }
         const d = await saveWithConflict('saveTask', isNew ? { patch } : { id: t.TaskID, version: t.Version, patch }, 'tasks');
@@ -2226,7 +2260,7 @@
   function exportCsv(scope) {
     const f = S.filters[scope];
     const rows = sortTasks(filterTasks(f, scope === 'my' ? myBase(f.tab) : S.data.tasks), f.sort, f.dir);
-    const cols = ['TaskID', 'Title', 'Stage', 'Meeting', 'Priority', 'AssignedTo', 'Collaborators', 'Team', 'Category', 'StartDate', 'DueDate', 'CompletedDate', 'Progress', 'CreatedBy', 'CreatedAt', 'UpdatedAt'];
+    const cols = ['TaskID', 'Title', 'Stage', 'Meeting', 'Priority', 'AssignedTo', 'Collaborators', 'Team', 'Category', 'StartDate', 'DueDate', 'CompletedDate', 'Progress', 'Subtasks', 'CreatedBy', 'CreatedAt', 'UpdatedAt'];
     const cell = (v) => { let s = String(v === null || v === undefined ? '' : v); if (/^[=+\-@]/.test(s)) s = "'" + s; return '"' + s.replace(/"/g, '""') + '"'; };
     const csv = [cols.join(',')].concat(rows.map((t) => cols.map((c) => cell(t[c])).join(','))).join('\r\n');
     const a = document.createElement('a');
@@ -2241,6 +2275,8 @@
    *  Event wiring
    * ---------------------------------------------------------------- */
   const ACTIONS = {
+    subAdd: () => { const inp = $('#subNew'); const v = (inp && inp.value || '').trim(); if (!v) { if (inp) inp.focus(); return; } const t = taskById(S.drawer.id); const s = parseSubs(t.Subtasks); if (s.length >= MAX_SUBTASKS) return toast(`Maximum ${MAX_SUBTASKS} subtasks.`, 'warn'); s.push({ title: v.slice(0, 200), done: false }); saveSubs(s); },
+    subDelete: async (el) => { const t = taskById(S.drawer.id); const s = parseSubs(t.Subtasks); const x = s[Number(el.dataset.i)]; if (!x) return; if (!(await confirmDialog({ title: 'Remove subtask', question: 'Remove this subtask?', message: esc(x.title), confirmText: 'Remove', danger: true }))) return; s.splice(Number(el.dataset.i), 1); saveSubs(s); },
     go: (el) => go(el.dataset.href),
     openTask: (el) => navTask(el.dataset.id, el.dataset.tab),
     closeDrawer: () => closeDrawer(),
@@ -2396,6 +2432,7 @@
     },
     uploadFile: async (el) => { const f = el.files && el.files[0]; el.value = ''; if (f) handleUpload(f); },
     quickStage: (el) => changeTaskField(el.dataset.id, { Stage: el.value }),
+    subToggle: (el) => { const t = taskById(S.drawer.id); const s = parseSubs(t.Subtasks); const x = s[Number(el.dataset.i)]; if (!x) return; x.done = el.checked; saveSubs(s); },
     drawerField: (el) => { const v = el.dataset.field === 'Progress' ? Number(el.value) : el.value; changeTaskField(S.drawer.id, { [el.dataset.field]: v }); },
     kanbanFilter: (el) => { S.filters.kanban[el.dataset.key] = el.value; renderView(); },
     calInit: (el) => { S.cal.initiative = el.value; renderView(); },
@@ -2501,6 +2538,7 @@
         else if (e.target.id.startsWith('reply-')) { e.preventDefault(); $('[data-action="postReply"]').click(); }
         else if (e.target.id.startsWith('edit-')) { e.preventDefault(); $('[data-action="saveEdit"]').click(); }
       }
+      if (e.key === 'Enter' && e.target.id === 'subNew') { e.preventDefault(); ACTIONS.subAdd(); return; }
       if ((e.key === 'Enter' || e.key === ' ') && e.target.matches('.kcard, .ini-card, .member')) { e.preventDefault(); e.target.click(); }
     });
     const gs = $('#globalSearch');

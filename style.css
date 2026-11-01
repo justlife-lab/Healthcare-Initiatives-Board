@@ -697,3 +697,23 @@ table.tbl { width: 100%; border-collapse: collapse; }
 .upload-drop { display: flex; align-items: center; gap: 14px; padding: 22px; border: 2px dashed var(--border-strong); border-radius: 12px; background: var(--surface-2); cursor: pointer; }
 .upload-drop .ic { width: 28px; height: 28px; color: var(--teal-600); transform: rotate(180deg); }
 .upload-drop:hover, .upload-drop.over { border-color: var(--teal-500); background: var(--teal-50); }
+
+/* ---------- Subtasks ---------- */
+.sub-chip { display: inline-flex; align-items: center; gap: 3px; margin-left: 8px; vertical-align: 1px; font-size: 11.5px; font-weight: 600; color: var(--text-2); background: var(--slate-bg); border-radius: 10px; padding: 0 7px; height: 19px; }
+.sub-chip .ic { width: 12px; height: 12px; }
+.sub-chip.all { color: #15803D; background: #DCFCE7; }
+.subtasks { margin-top: 14px; border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; background: #FBFCFE; }
+.sub-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 6px; font-size: 13px; }
+.sub-head .muted { font-size: 12px; }
+.sub-row { display: flex; align-items: center; gap: 8px; padding: 4px 0; border-top: 1px dashed var(--border); }
+.sub-row:first-of-type { border-top: 0; }
+.sub-row .check { flex: 1; display: flex; align-items: center; gap: 9px; font-size: 13.5px; cursor: pointer; margin: 0; }
+.sub-row .check input { width: 16px; height: 16px; accent-color: var(--teal-600); flex: none; }
+.sub-row.done .check span { text-decoration: line-through; color: var(--muted); }
+.sub-add { display: flex; gap: 8px; margin-top: 8px; }
+.sub-add .input { height: 32px; font-size: 13px; }
+.ksubs { list-style: none; margin: 6px 0 2px; padding: 0; font-size: 12px; color: var(--text-2); }
+.ksubs li { display: flex; align-items: baseline; gap: 6px; line-height: 1.45; }
+.ksubs li i { flex: none; width: 9px; height: 9px; border: 1.5px solid var(--border-strong); border-radius: 2px; transform: translateY(1px); }
+.ksubs li.done { color: var(--muted); text-decoration: line-through; }
+.ksubs li.done i { background: var(--teal-600); border-color: var(--teal-600); }
