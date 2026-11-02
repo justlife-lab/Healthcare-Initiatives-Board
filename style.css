@@ -699,8 +699,10 @@ table.tbl { width: 100%; border-collapse: collapse; }
 .upload-drop:hover, .upload-drop.over { border-color: var(--teal-500); background: var(--teal-50); }
 
 /* ---------- Subtasks ---------- */
-.sub-chip { display: inline-flex; align-items: center; gap: 3px; margin-left: 8px; vertical-align: 1px; font-size: 11.5px; font-weight: 600; color: var(--text-2); background: var(--slate-bg); border-radius: 10px; padding: 0 7px; height: 19px; }
-.sub-chip .ic { width: 12px; height: 12px; }
+.sub-chip { display: inline-flex; align-items: center; gap: 3px; margin-left: 8px; vertical-align: 1px; font: 600 11.5px inherit; font-family: inherit; color: var(--text-2); background: var(--slate-bg); border: 1px solid transparent; border-radius: 10px; padding: 0 8px 0 5px; height: 21px; cursor: pointer; }
+.sub-chip:hover { border-color: var(--border-strong); background: #fff; }
+.sub-chip .ic { width: 12px; height: 12px; transition: transform .15s; transform: rotate(-90deg); }
+.sub-chip.open .ic { transform: none; }
 .sub-chip.all { color: #15803D; background: #DCFCE7; }
 .subtasks { margin-top: 14px; border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; background: #FBFCFE; }
 .sub-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 6px; font-size: 13px; }
@@ -717,3 +719,16 @@ table.tbl { width: 100%; border-collapse: collapse; }
 .ksubs li i { flex: none; width: 9px; height: 9px; border: 1.5px solid var(--border-strong); border-radius: 2px; transform: translateY(1px); }
 .ksubs li.done { color: var(--muted); text-decoration: line-through; }
 .ksubs li.done i { background: var(--teal-600); border-color: var(--teal-600); }
+
+.sub-tr td { background: #F8FAFD; border-top: 0; padding-top: 2px; padding-bottom: 10px; cursor: default; }
+.sub-tr:hover td { background: #F8FAFD; }
+.sub-inline { border-left: 2px solid var(--border-strong); padding: 2px 0 2px 12px; max-width: 760px; }
+.sub-inline .sub-row { padding: 3px 0; }
+.sub-owner { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--text-2); white-space: nowrap; min-width: 130px; }
+.sub-owner-sel { width: 150px; flex: none; height: 30px; font-size: 12.5px; }
+.sub-add .sub-owner-sel { height: 32px; }
+.sub-head .sub-bar { flex: 1; max-width: 160px; height: 5px; background: var(--slate-bg); border-radius: 3px; overflow: hidden; margin-left: auto; align-self: center; }
+.sub-head .sub-bar i { display: block; height: 100%; background: var(--teal-600); }
+.sub-list { max-height: 300px; overflow-y: auto; }
+.ksubs li span:first-of-type { flex: 1; }
+.ksubs li .ko { flex: none; font-size: 10.5px; color: var(--muted); background: var(--slate-bg); border-radius: 8px; padding: 0 6px; text-decoration: none; }

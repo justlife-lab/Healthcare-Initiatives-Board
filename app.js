@@ -23,7 +23,7 @@
   const READ_ACTIONS = new Set(['bootstrap', 'sync', 'getTask', 'getActivity', 'ping', 'config']);
   const AUTH_ERRORS = new Set(['AUTH_EXPIRED', 'AUTH_REQUIRED', 'UNAUTHORIZED', 'AUTH_INVALID']);
   const PAGE_SIZES = [25, 50, 100];
-  const VERSION = '1.15.0'; // must match CONFIG.APP_VERSION in Code.gs
+  const VERSION = '1.16.0'; // must match CONFIG.APP_VERSION in Code.gs
 
   const defaultTaskFilter = () => ({ q: '', stage: '', meeting: '', team: '', status: '', priority: '', assignee: '', initiative: '', project: '', category: '', due: '', archived: false, sort: 'DueDate', dir: 1, page: 1, size: 25 });
 
@@ -139,13 +139,35 @@
   const isDueToday = (t) => OPEN(t.Status) && t.DueDate === today();
   function isDueThisWeek(t) { if (!OPEN(t.Status) || !t.DueDate) return false; const s = weekStart(today()); return t.DueDate >= s && t.DueDate <= addDays(s, 6); }
   function openDeps(t) { return list(t.DependsOn).map(taskById).filter((d) => d && OPEN(d.Status)); }
-  /** Subtasks (max 3) are stored as lines "[ ] text" / "[x] text" in the task's Subtasks column. */
-  const MAX_SUBTASKS = 3;
-  function parseSubs(v) {
-    return String(v || '').split(/\r?\n/).map((l) => { const m = l.trim().match(/^(?:[-*•]\s*)?\[( |x|X|✓)?\]\s*(.*)$/); return m ? { title: m[2].trim(), done: !!m[1] && m[1] !== ' ' } : { title: l.trim(), done: false }; }).filter((x) => x.title);
+  /** Subtasks (max 10) are stored as lines "[ ] text | owner@email" / "[x] text" in the task's Subtasks column. */
+  const MAX_SUBTASKS = 10;
+  function parseSubLine(l) {
+    l = String(l || '').trim();
+    const m = l.match(/^(?:[-*•]\s*)?\[( |x|X|✓)?\]\s*(.*)$/);
+    let title = m ? m[2].trim() : l.replace(/^[-*•]\s*/, ''), owner = '';
+    const p = title.match(/^(.*?)\s*\|\s*([^|\s]+@[^|\s]+)\s*$/);
+    if (p) { title = p[1].trim(); owner = p[2].toLowerCase(); }
+    return { title, done: !!(m && m[1] && m[1] !== ' '), owner };
   }
-  const fmtSubs = (arr) => arr.map((x) => (x.done ? '[x] ' : '[ ] ') + x.title).join('\n');
-  const subChip = (t) => { const s = parseSubs(t.Subtasks); if (!s.length) return ''; const d = s.filter((x) => x.done).length; return `<span class="sub-chip ${d === s.length ? 'all' : ''}" title="Subtasks done">${icon('check', 'ic-sm')}${d}/${s.length}</span>`; };
+  const parseSubs = (v) => String(v || '').split(/\r?\n/).map(parseSubLine).filter((x) => x.title);
+  const fmtSubs = (arr) => arr.map((x) => (x.done ? '[x] ' : '[ ] ') + x.title + (x.owner ? ' | ' + x.owner : '')).join('\n');
+  /** "Call clinics @Nazar" → { title, owner } (owner resolved from team names / emails). */
+  function subFromText(text) {
+    const x = parseSubLine(text);
+    const m = x.title.match(/^(.*?)\s+@\s*([^@]+)$/);
+    if (m && !x.owner) { const name = m[2].trim().toLowerCase(); const u = activeUsers().find((u) => u.Name.toLowerCase() === name || u.Email.toLowerCase() === name || u.Name.toLowerCase().split(' ')[0] === name || u.Email.split('@')[0].toLowerCase() === name); x.title = m[1].trim(); x.owner = u ? u.Email : ''; x.unknown = u ? '' : m[2].trim(); }
+    return x;
+  }
+  const canTickSub = (t, x) => (canEditTask(t) && !t.Archived) || (S.me && S.me.role !== 'Viewer' && x.owner && x.owner === S.me.email);
+  const subChip = (t) => { const s = parseSubs(t.Subtasks); if (!s.length) return ''; const d = s.filter((x) => x.done).length; const open = S.subOpen && S.subOpen.has(t.TaskID); return `<button class="sub-chip ${d === s.length ? 'all' : ''} ${open ? 'open' : ''}" data-action="toggleSubs" data-id="${esc(t.TaskID)}" title="${open ? 'Hide' : 'Show'} subtasks" aria-expanded="${open}">${icon('down', 'ic-sm')}${d}/${s.length} subtasks</button>`; };
+  /** Inline subtask list shown under a task row when its chip is clicked. */
+  function subRowsHtml(t, colspan) {
+    if (!(S.subOpen && S.subOpen.has(t.TaskID))) return '';
+    const s = parseSubs(t.Subtasks); if (!s.length) return '';
+    return `<tr class="sub-tr"><td></td><td colspan="${colspan - 1}"><div class="sub-inline">${s.map((x, i) => `<div class="sub-row ${x.done ? 'done' : ''}">
+      <label class="check"><input type="checkbox" ${x.done ? 'checked' : ''} ${canTickSub(t, x) ? '' : 'disabled'} data-change="subToggleRow" data-id="${esc(t.TaskID)}" data-i="${i}"><span>${esc(x.title)}</span></label>
+      <span class="sub-owner">${x.owner ? `${avatar(x.owner, 'sm')}${esc(uname(x.owner))}` : '<span class="faint">Unassigned</span>'}</span></div>`).join('')}</div></td></tr>`;
+  }
   /** Progress follows the stage automatically: Parked 0 → Under design 33 → Build 67 → Live 100 (Done 100). */
   const STAGE_PROGRESS = { Parked: 0, 'Under Design': 33, Build: 67, Live: 100, Done: 100 };
   const effProgress = (t) => { const p = STAGE_PROGRESS[effStage(t)]; return p != null ? p : (t.Status === 'Completed' ? 100 : Number(t.Progress) || 0); };
@@ -929,7 +951,7 @@
           <td class="c-prog" style="min-width:120px">${progressBar(effProgress(t), effProgress(t) === 100)}</td>
           <td>${commentBadge(t)}</td>
           <td class="row-actions c-cat">${canCreateTask() ? `<button class="icon-btn sm" data-action="duplicateTask" data-id="${esc(t.TaskID)}" title="Duplicate" aria-label="Duplicate">${icon('copy', 'ic-sm')}</button>` : ''}${canArchiveTask(t) ? `<button class="icon-btn sm" data-action="archiveTask" data-id="${esc(t.TaskID)}" title="${t.Archived ? 'Restore' : 'Archive'}" aria-label="${t.Archived ? 'Restore' : 'Archive'}">${icon(t.Archived ? 'refresh' : 'archive', 'ic-sm')}</button>` : ''}${isAdmin() ? `<button class="icon-btn sm danger-btn" data-action="deleteTask" data-id="${esc(t.TaskID)}" title="Delete permanently" aria-label="Delete">${icon('trash', 'ic-sm')}</button>` : ''}</td>
-        </tr>`;
+        </tr>${subRowsHtml(t, 9)}`;
       }).join('')}</tbody></table></div>
       <div class="pager"><span>Showing ${(f.page - 1) * f.size + 1}–${Math.min(f.page * f.size, sorted.length)} of ${sorted.length}</span>
         <span class="spacer"></span>
@@ -1000,7 +1022,8 @@
       if (tab === 'assigned') return t.AssignedTo === e;
       if (tab === 'collab') return list(t.Collaborators).includes(e);
       if (tab === 'created') return t.CreatedBy === e;
-      return t.AssignedTo === e || list(t.Collaborators).includes(e);
+      if (tab === 'subs') return parseSubs(t.Subtasks).some((x) => x.owner === e);
+      return t.AssignedTo === e || list(t.Collaborators).includes(e) || parseSubs(t.Subtasks).some((x) => x.owner === e);
     });
   }
   function renderMyTasks() {
@@ -1011,7 +1034,7 @@
     return `<div class="view-head"><div><h2>My tasks</h2><p class="sub">${mine.filter((t) => OPEN(t.Status)).length} open · ${mine.filter(isOverdue).length} overdue · ${mine.filter(isDueThisWeek).length} due this week</p></div>
       <div class="actions">${canCreateTask() ? `<button class="btn btn-primary" data-action="newTask" data-assignee="${esc(S.me.email)}">${icon('plus')}New task</button>` : ''}</div></div>
       <div class="tabs" role="tablist">
-        ${[['assigned', 'Assigned to me'], ['collab', 'Collaborating'], ['created', 'Created by me']].map(([k, l]) => `<button role="tab" class="${f.tab === k ? 'on' : ''}" data-action="myTab" data-tab="${k}">${l}<span class="pill-count">${count(k)}</span></button>`).join('')}
+        ${[['assigned', 'Assigned to me'], ['subs', 'My subtasks'], ['collab', 'Collaborating'], ['created', 'Created by me']].map(([k, l]) => `<button role="tab" class="${f.tab === k ? 'on' : ''}" data-action="myTab" data-tab="${k}">${l}<span class="pill-count">${count(k)}</span></button>`).join('')}
       </div>
       ${taskFilterBar(f, 'my', { noAssignee: f.tab === 'assigned' })}
       <div class="card" id="tableArea">${taskTable(filterTasks(f, base), f, 'my')}</div>`;
@@ -1039,7 +1062,7 @@
       return `<div class="kcard ${isOverdue(t) ? 'overdue' : ''}" data-action="openTask" data-id="${esc(t.TaskID)}" ${draggable ? 'draggable="true"' : ''} tabindex="0" aria-label="${esc(t.Title)}">
         <div class="meta"><span class="idtag">${esc(t.TaskID)}</span><span class="right">${priPill(t.Priority)}</span></div>
         <div class="t">${esc(t.Title)}</div>
-        ${parseSubs(t.Subtasks).length ? `<ul class="ksubs">${parseSubs(t.Subtasks).map((x) => `<li class="${x.done ? 'done' : ''}"><i></i>${esc(x.title)}</li>`).join('')}</ul>` : ''}
+        ${parseSubs(t.Subtasks).length ? `<ul class="ksubs">${parseSubs(t.Subtasks).map((x) => `<li class="${x.done ? 'done' : ''}"><i></i><span>${esc(x.title)}</span>${x.owner ? `<span class="ko" title="${esc(uname(x.owner))}">${esc(uname(x.owner).split(' ')[0])}</span>` : ''}</li>`).join('')}</ul>` : ''}
         ${t.Category || t.Meeting ? `<div class="meta">${t.Category ? `<span class="ctag">${esc(t.Category)}</span>` : ''}${t.Meeting ? `<span>${esc(t.Meeting)}</span>` : ''}</div>` : ''}
         ${progressBar(effProgress(t), effProgress(t) === 100)}
         <div class="meta">${avatar(t.AssignedTo, 'sm')}<span>${dueCell(t)}</span><span class="right">${commentBadge(t)}</span></div></div>`;
@@ -1438,7 +1461,14 @@
     Subtasks: ['subtasks', 'sub tasks', 'sub-tasks'],
     Sub1: ['subtask 1', 'subtask1', 'sub-task 1', 'sub task 1'],
     Sub2: ['subtask 2', 'subtask2', 'sub-task 2', 'sub task 2'],
-    Sub3: ['subtask 3', 'subtask3', 'sub-task 3', 'sub task 3']
+    Sub3: ['subtask 3', 'subtask3', 'sub-task 3', 'sub task 3'],
+    Sub4: ['subtask 4', 'subtask4', 'sub-task 4', 'sub task 4'],
+    Sub5: ['subtask 5', 'subtask5', 'sub-task 5', 'sub task 5'],
+    Sub6: ['subtask 6', 'subtask6', 'sub-task 6', 'sub task 6'],
+    Sub7: ['subtask 7', 'subtask7', 'sub-task 7', 'sub task 7'],
+    Sub8: ['subtask 8', 'subtask8', 'sub-task 8', 'sub task 8'],
+    Sub9: ['subtask 9', 'subtask9', 'sub-task 9', 'sub task 9'],
+    Sub10: ['subtask 10', 'subtask10', 'sub-task 10', 'sub task 10']
   };
   const DEFAULT_ORDER = ['Title', 'Owner', 'Team', 'Stage', 'Priority', 'DueDate', 'Meeting', 'Description'];
   function parseDelimited(text) {
@@ -1463,7 +1493,7 @@
     let mapping = head.map((h) => Object.keys(IMPORT_COLS).find((k) => IMPORT_COLS[k].includes(h)) || '');
     let body = grid.slice(1);
     if (!mapping.includes('Title')) { mapping = grid[0].map((_, i) => DEFAULT_ORDER[i] || ''); body = grid; }
-    const rows = body.map((r) => { const o = {}; mapping.forEach((k, i) => { if (k && r[i] !== undefined && !o[k]) o[k] = r[i]; }); if (o.Update) { o.Description = (o.Description ? o.Description + '\n' : '') + 'Latest update: ' + o.Update; delete o.Update; } if (o.Description) o.Description = o.Description.split(' | ').join('\n'); const sb = [o.Sub1, o.Sub2, o.Sub3].filter(Boolean); if (sb.length && !o.Subtasks) o.Subtasks = sb.map((x) => '[ ] ' + x).join('\n'); delete o.Sub1; delete o.Sub2; delete o.Sub3; return o; }).filter((o) => o.Title);
+    const rows = body.map((r) => { const o = {}; mapping.forEach((k, i) => { if (k && r[i] !== undefined && !o[k]) o[k] = r[i]; }); if (o.Update) { o.Description = (o.Description ? o.Description + '\n' : '') + 'Latest update: ' + o.Update; delete o.Update; } if (o.Description) o.Description = o.Description.split(' | ').join('\n'); for (let k = 1; k <= 10; k++) if (o['Sub' + k] === undefined) delete o['Sub' + k]; return o; }).filter((o) => o.Title);
     return { rows, mapping };
   }
   async function importChunks(rows, dryRun) {
@@ -1475,7 +1505,7 @@
     }
     return out;
   }
-  const TEMPLATE_HEAD = ['Title', 'Owner', 'Support', 'Team', 'Stage', 'Meeting', 'Category', 'Priority', 'Due date', 'Next step', 'Latest update', 'Subtask 1', 'Subtask 2', 'Subtask 3'];
+  const TEMPLATE_HEAD = ['Title', 'Owner', 'Support', 'Team', 'Stage', 'Meeting', 'Category', 'Priority', 'Due date', 'Next step', 'Latest update', 'Subtask 1', 'Subtask 2', 'Subtask 3', 'Subtask 4', 'Subtask 5', 'Subtask 6', 'Subtask 7', 'Subtask 8', 'Subtask 9', 'Subtask 10'];
   async function loadSheetJS() {
     if (!window.XLSX) await loadScript('https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js');
     return window.XLSX;
@@ -1486,12 +1516,12 @@
     try { X = await loadSheetJS(); } catch (e) { return downloadTemplateCsv(); }
     const owners = activeUsers().map((u) => u.Name);
     const ex = [
-      ['Clinic partnership – Mediclinic', owners[0] || 'Nitish', owners[1] || '', 'BD', 'Build', 'Team Weekly', 'Lab', 'P0', '2026-11-15', 'Agree pricing and sign MOU', 'Intro call done', 'Share price list', 'Legal review of MOU', 'Sign MOU'],
-      ['Q4 brand video', owners[2] || 'Yana', '', 'Marketing', 'Under design', 'Taskforce', 'Others', 'P2', '', 'Write script and book shoot', '', 'Write script', 'Book studio', '']
+      ['Clinic partnership – Mediclinic', owners[0] || 'Nitish', owners[1] || '', 'BD', 'Build', 'Team Weekly', 'Lab', 'P0', '2026-11-15', 'Agree pricing and sign MOU', 'Intro call done', `Share price list @${owners[0] || 'Nitish'}`, `Legal review of MOU @${owners[1] || 'Nazar'}`, 'Sign MOU'],
+      ['Q4 brand video', owners[2] || 'Yana', '', 'Marketing', 'Under design', 'Taskforce', 'Others', 'P2', '', 'Write script and book shoot', '', `Write script @${owners[2] || 'Yana'}`, 'Book studio', '']
     ];
     const wb = X.utils.book_new();
     const ws = X.utils.aoa_to_sheet([TEMPLATE_HEAD].concat(ex));
-    ws['!cols'] = [36, 16, 22, 12, 14, 14, 12, 9, 12, 44, 36, 26, 26, 26].map((w) => ({ wch: w }));
+    ws['!cols'] = [36, 16, 22, 12, 14, 14, 12, 9, 12, 44, 36, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28].map((w) => ({ wch: w }));
     X.utils.book_append_sheet(wb, ws, 'Tasks');
     const cols = [owners.concat(['TBD']), settingList('DEPARTMENTS'), ['Live', 'Build', 'Under design', 'Parked', 'Done'], settingList('FORUMS'), settingList('CATEGORIES'), ['P0 (Critical)', 'P1 (High)', 'P2 (Medium)', 'P3 (Low)']];
     const lists = [['Owner', 'Team', 'Stage', 'Meeting', 'Category', 'Priority']];
@@ -1505,7 +1535,7 @@
       ['3. Support = other people helping, comma-separated. They become collaborators and are notified.'],
       ['4. Stage: Live, Build, Under design, Parked or Done. Priority: P0, P1, P2 or P3.'],
       ['5. Due date: 2026-11-15 or 15/11/2026 (optional).'],
-      ['   Subtask 1, Subtask 2, Subtask 3: up to 3 subtasks per task (optional). Leave empty if there are none.'],
+      ['   Subtask 1 … Subtask 10: up to 10 subtasks per task (optional). To assign a subtask, end it with @Name, e.g. "Call 20 clinics @Nazar".'],
       ['6. Upload: board ▸ Settings ▸ Bulk upload ▸ Upload the filled template, check the preview, click Import.'],
       ['7. A row with the same title and owner as an existing task is not duplicated (its stage / meeting is updated instead).']];
     const wh = X.utils.aoa_to_sheet(how); wh['!cols'] = [{ wch: 110 }];
@@ -1514,7 +1544,7 @@
     toast('Template downloaded');
   }
   function downloadTemplateCsv() {
-    const csv = [TEMPLATE_HEAD.join(','), '"Clinic partnership – Mediclinic",Nitish,Nazar,BD,Build,Team Weekly,Lab,P0,2026-11-15,Agree pricing and sign MOU,Intro call done,Share price list,Legal review of MOU,Sign MOU'].join('\r\n');
+    const csv = [TEMPLATE_HEAD.join(','), '"Clinic partnership – Mediclinic",Nitish,Nazar,BD,Build,Team Weekly,Lab,P0,2026-11-15,Agree pricing and sign MOU,Intro call done,Share price list @Nitish,Legal review of MOU @Nazar,Sign MOU'].join('\r\n');
     const a = document.createElement('a');
     a.href = URL.createObjectURL(new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8' }));
     a.download = 'Bulk-task-upload-template.csv'; document.body.appendChild(a); a.click(); a.remove();
@@ -1555,7 +1585,7 @@
       <textarea class="textarea mt-8" id="importText" rows="5" placeholder="Title&#9;Owner&#9;Support&#9;Team&#9;Stage&#9;Meeting&#9;Category&#9;Priority&#9;Due date&#9;Next step&#10;Clinic partnership – Mediclinic&#9;Nitish&#9;Nazar&#9;BD&#9;Build&#9;Team Weekly&#9;Lab&#9;P0&#9;2026-11-15&#9;Agree pricing" data-input="importText">${esc(st.text)}</textarea>
       <div class="row mt-8"><button class="btn" data-action="importPreview">${icon('search')}Preview</button>${p && p.importable ? `<button class="btn btn-primary" data-action="importRun">${icon('download')}Import / update ${p.importable} task${p.importable === 1 ? '' : 's'}</button>` : ''}<span class="muted" style="font-size:12px">Nothing is saved until you click Import. Duplicate titles for the same owner are skipped.</span></div>
       ${p ? `<div class="mt-16 table-wrap"><table class="tbl"><thead><tr><th>#</th><th>Title</th><th>Owner</th><th>Team</th><th>Stage</th><th>Priority</th><th>Due</th><th>Meeting</th><th>Notes</th></tr></thead><tbody>
-        ${p.results.map((r) => `<tr style="cursor:default" class="${r.ok || r.update ? '' : 'overdue'}"><td class="muted">${r.row}</td><td class="title-cell"><span class="t">${esc(r.task.Title)}</span>${r.task.Subtasks ? `<span class="s">Subtasks: ${esc(parseSubs(r.task.Subtasks).map((x) => x.title).join(' · '))}</span>` : ''}${r.task.TaskID ? `<span class="s">${esc(r.task.TaskID)}</span>` : ''}</td><td>${person(r.task.AssignedTo)}</td><td>${esc(r.task.Team || '—')}</td><td>${stagePill(r.task.Stage || 'Under Design')}</td><td>${priPill(r.task.Priority)}</td><td>${fmtDate(r.task.DueDate)}</td><td>${esc(r.task.Meeting || '—')}</td>
+        ${p.results.map((r) => `<tr style="cursor:default" class="${r.ok || r.update ? '' : 'overdue'}"><td class="muted">${r.row}</td><td class="title-cell"><span class="t">${esc(r.task.Title)}</span>${r.task.Subtasks ? `<span class="s">Subtasks: ${esc(parseSubs(r.task.Subtasks).map((x) => x.title + (x.owner ? ' (' + uname(x.owner) + ')' : '')).join(' · '))}</span>` : ''}${r.task.TaskID ? `<span class="s">${esc(r.task.TaskID)}</span>` : ''}</td><td>${person(r.task.AssignedTo)}</td><td>${esc(r.task.Team || '—')}</td><td>${stagePill(r.task.Stage || 'Under Design')}</td><td>${priPill(r.task.Priority)}</td><td>${fmtDate(r.task.DueDate)}</td><td>${esc(r.task.Meeting || '—')}</td>
         <td style="font-size:12px">${r.ok ? '' : `<span class="${r.update ? 'muted' : 'due-overdue'}">${esc(r.error)}</span><br>`}${r.warnings.map((w) => `<span class="muted">${esc(w)}</span>`).join('<br>')}</td></tr>`).join('')}
         </tbody></table></div><p class="mt-8 muted">${p.dryRun ? `${p.importable} of ${p.total} rows ready to import.` : `<b>${p.imported} tasks imported${p.updated ? `, ${p.updated} existing tasks updated` : ''}.</b>`}</p>` : ''}
     </div></div>`;
@@ -1600,7 +1630,7 @@
         <td>${t.Category ? `<span class="ctag">${esc(t.Category)}</span>` : '<span class="faint">—</span>'}</td>
         <td>${person(t.AssignedTo)}</td>
         <td class="mono">${t.DueDate ? dueCell(t) : '<span class="faint">–</span>'}</td>
-        <td style="text-align:right">${priPill(t.Priority)}</td></tr>`; }).join('')}</tbody></table></div>`;
+        <td style="text-align:right">${priPill(t.Priority)}</td></tr>${subRowsHtml(t, 6)}`; }).join('')}</tbody></table></div>`;
   }
   function renderMeetings() {
     const f = S.filters.mtg;
@@ -1746,14 +1776,16 @@
     const subs = parseSubs(t.Subtasks);
     if (!subs.length && !editable) return '';
     const done = subs.filter((x) => x.done).length;
-    return `<div class="subtasks"><div class="sub-head"><b>Subtasks</b><span class="muted">${subs.length ? `${done} of ${subs.length} done` : `Add up to ${MAX_SUBTASKS}`}</span></div>
-      ${subs.map((x, i) => `<div class="sub-row ${x.done ? 'done' : ''}">
-        <label class="check"><input type="checkbox" ${x.done ? 'checked' : ''} ${editable ? '' : 'disabled'} data-change="subToggle" data-i="${i}"><span>${esc(x.title)}</span></label>
-        ${editable ? `<button class="icon-btn sm" data-action="subDelete" data-i="${i}" title="Remove subtask" aria-label="Remove subtask">${icon('x', 'ic-sm')}</button>` : ''}</div>`).join('')}
-      ${editable && subs.length < MAX_SUBTASKS ? `<div class="sub-add"><input class="input" id="subNew" maxlength="200" placeholder="Add a subtask (${subs.length + 1} of ${MAX_SUBTASKS}) and press Enter"><button class="btn btn-sm" data-action="subAdd">${icon('plus', 'ic-sm')}Add</button></div>` : ''}
+    const ownerSel = (sel, attrs) => `<select class="select select-sm sub-owner-sel" ${attrs}>${opts([{ v: '', l: 'Unassigned' }].concat(activeUsers().map((u) => ({ v: u.Email, l: u.Name }))), sel || '')}</select>`;
+    return `<div class="subtasks"><div class="sub-head"><b>Subtasks</b><span class="muted">${subs.length ? `${done} of ${subs.length} done` : `Add up to ${MAX_SUBTASKS}`}</span>${subs.length > 1 ? `<span class="sub-bar"><i style="width:${Math.round(done / subs.length * 100)}%"></i></span>` : ''}</div>
+      <div class="sub-list">${subs.map((x, i) => `<div class="sub-row ${x.done ? 'done' : ''}">
+        <label class="check"><input type="checkbox" ${x.done ? 'checked' : ''} ${canTickSub(t, x) ? '' : 'disabled'} data-change="subToggle" data-i="${i}"><span>${esc(x.title)}</span></label>
+        ${editable ? ownerSel(x.owner, `data-change="subOwner" data-i="${i}" aria-label="Assign subtask"`) : `<span class="sub-owner">${x.owner ? `${avatar(x.owner, 'sm')}${esc(uname(x.owner))}` : '<span class="faint">Unassigned</span>'}</span>`}
+        ${editable ? `<button class="icon-btn sm" data-action="subDelete" data-i="${i}" title="Remove subtask" aria-label="Remove subtask">${icon('x', 'ic-sm')}</button>` : ''}</div>`).join('')}</div>
+      ${editable && subs.length < MAX_SUBTASKS ? `<div class="sub-add"><input class="input" id="subNew" maxlength="200" placeholder="Add a subtask (${subs.length + 1} of ${MAX_SUBTASKS}) and press Enter">${ownerSel('', 'id="subNewOwner" aria-label="Assign new subtask to"')}<button class="btn btn-sm" data-action="subAdd">${icon('plus', 'ic-sm')}Add</button></div>` : ''}
     </div>`;
   }
-  function saveSubs(arr) { const id = S.drawer.id; changeTaskField(id, { Subtasks: fmtSubs(arr) }, { optimistic: true }); }
+  function saveSubs(arr, id) { id = id || S.drawer.id; changeTaskField(id, { Subtasks: fmtSubs(arr) }, { optimistic: true }); }
 
   function drawerDetails(t) {
     const dr = S.drawer;
@@ -2052,13 +2084,11 @@
       { name: 'Meeting', label: 'Review meeting', type: 'select', options: settingList('FORUMS'), placeholder: '— No meeting —' },
       { name: 'Collaborators', label: 'Collaborators', type: 'checklist', options: activeUsers().map((u) => ({ v: u.Email, l: u.Name })), hint: 'They will be notified and can edit the task.' },
       { name: 'DependsOn', label: 'Depends on (task IDs)', placeholder: 'e.g. TSK-00012, TSK-00015', list: 'taskIdList', hint: 'Comma-separated. The task shows as waiting until these are completed.' },
-      { name: 'Sub1', label: 'Subtask 1', max: 200, placeholder: 'Optional' },
-      { name: 'Sub2', label: 'Subtask 2', max: 200, placeholder: 'Optional' },
-      { name: 'Sub3', label: 'Subtask 3', max: 200, placeholder: 'Optional', span: true },
+      { name: 'SubText', label: `Subtasks (max ${MAX_SUBTASKS})`, type: 'textarea', span: true, rows: 4, max: 4000, placeholder: 'One subtask per line. Add @Name at the end to assign it, e.g.\nCall 20 clinics @Nazar\nPrepare price list @Nitish', hint: 'One per line. End a line with @Name to assign it to a team member (they get a notification). Ticks are kept when you edit.' },
       { name: 'Links', label: 'Supporting links', type: 'textarea', span: true, rows: 2, placeholder: 'https://… (one per line)', hint: 'Up to 10 http(s) links: documents, sheets, SOPs.' }
     ];
     const oldSubs = parseSubs(values.Subtasks);
-    oldSubs.forEach((x, i) => { values['Sub' + (i + 1)] = x.title; });
+    values.SubText = oldSubs.map((x) => x.title + (x.owner ? ' @' + uname(x.owner) : '')).join('\n');
     openForm({
       title: isNew ? 'New task' : `Edit ${t.TaskID}`, values, fields,
       submitText: isNew ? 'Create task' : 'Save changes',
@@ -2072,6 +2102,10 @@
         
         const bad = String(v.Links || '').split('\n').map((l) => l.trim()).filter(Boolean).find((l) => !/^https?:\/\/\S+$/i.test(l));
         if (bad) e.Links = 'Not a valid link: ' + bad.slice(0, 50);
+        const subLines = String(v.SubText || '').split('\n').map((l) => l.trim()).filter(Boolean);
+        if (subLines.length > MAX_SUBTASKS) e.SubText = `Maximum ${MAX_SUBTASKS} subtasks (you have ${subLines.length}).`;
+        const unk = subLines.map(subFromText).find((x) => x.unknown);
+        if (unk) e.SubText = `"@${unk.unknown}" is not a team member. Use a name from the team list.`;
         const unknown = list(v.DependsOn).map((x) => x.toUpperCase()).find((x) => !S.data.tasks.some((y) => y.TaskID === x));
         if (unknown) e.DependsOn = 'Unknown task ID: ' + unknown;
         return e;
@@ -2081,8 +2115,8 @@
       },
       onSubmit: async (v) => {
         v.DependsOn = list(v.DependsOn).map((x) => x.toUpperCase()).join(', ');
-        v.Subtasks = fmtSubs(['Sub1', 'Sub2', 'Sub3'].map((k) => String(v[k] || '').trim()).filter(Boolean).map((title) => ({ title, done: (oldSubs.find((o) => o.title === title) || {}).done || false })));
-        delete v.Sub1; delete v.Sub2; delete v.Sub3;
+        v.Subtasks = fmtSubs(String(v.SubText || '').split('\n').map((l) => l.trim()).filter(Boolean).map(subFromText).map((x) => ({ title: x.title, owner: x.owner, done: (oldSubs.find((o) => o.title === x.title) || {}).done || false })));
+        delete v.SubText;
         const patch = isNew ? v : changedOnly(Object.assign({}, t, { Progress: effProgress(t) }), v);
         if (!isNew && !Object.keys(patch).length) { toast('No changes to save.', 'warn'); return; }
         const d = await saveWithConflict('saveTask', isNew ? { patch } : { id: t.TaskID, version: t.Version, patch }, 'tasks');
@@ -2275,7 +2309,8 @@
    *  Event wiring
    * ---------------------------------------------------------------- */
   const ACTIONS = {
-    subAdd: () => { const inp = $('#subNew'); const v = (inp && inp.value || '').trim(); if (!v) { if (inp) inp.focus(); return; } const t = taskById(S.drawer.id); const s = parseSubs(t.Subtasks); if (s.length >= MAX_SUBTASKS) return toast(`Maximum ${MAX_SUBTASKS} subtasks.`, 'warn'); s.push({ title: v.slice(0, 200), done: false }); saveSubs(s); },
+    subAdd: () => { const inp = $('#subNew'); const v = (inp && inp.value || '').trim(); if (!v) { if (inp) inp.focus(); return; } const t = taskById(S.drawer.id); const s = parseSubs(t.Subtasks); if (s.length >= MAX_SUBTASKS) return toast(`Maximum ${MAX_SUBTASKS} subtasks.`, 'warn'); const x = subFromText(v); if (x.unknown) return toast(`"@${x.unknown}" is not a team member.`, 'warn'); const sel = $('#subNewOwner'); s.push({ title: x.title.slice(0, 200), done: false, owner: x.owner || (sel ? sel.value : '') }); saveSubs(s); },
+    toggleSubs: (el) => { S.subOpen = S.subOpen || new Set(); const id = el.dataset.id; if (S.subOpen.has(id)) S.subOpen.delete(id); else S.subOpen.add(id); rerender(); },
     subDelete: async (el) => { const t = taskById(S.drawer.id); const s = parseSubs(t.Subtasks); const x = s[Number(el.dataset.i)]; if (!x) return; if (!(await confirmDialog({ title: 'Remove subtask', question: 'Remove this subtask?', message: esc(x.title), confirmText: 'Remove', danger: true }))) return; s.splice(Number(el.dataset.i), 1); saveSubs(s); },
     go: (el) => go(el.dataset.href),
     openTask: (el) => navTask(el.dataset.id, el.dataset.tab),
@@ -2432,6 +2467,8 @@
     },
     uploadFile: async (el) => { const f = el.files && el.files[0]; el.value = ''; if (f) handleUpload(f); },
     quickStage: (el) => changeTaskField(el.dataset.id, { Stage: el.value }),
+    subOwner: (el) => { const t = taskById(S.drawer.id); const s = parseSubs(t.Subtasks); const x = s[Number(el.dataset.i)]; if (!x) return; x.owner = el.value; saveSubs(s); },
+    subToggleRow: (el) => { const t = taskById(el.dataset.id); const s = parseSubs(t.Subtasks); const x = s[Number(el.dataset.i)]; if (!x) return; x.done = el.checked; saveSubs(s, t.TaskID); },
     subToggle: (el) => { const t = taskById(S.drawer.id); const s = parseSubs(t.Subtasks); const x = s[Number(el.dataset.i)]; if (!x) return; x.done = el.checked; saveSubs(s); },
     drawerField: (el) => { const v = el.dataset.field === 'Progress' ? Number(el.value) : el.value; changeTaskField(S.drawer.id, { [el.dataset.field]: v }); },
     kanbanFilter: (el) => { S.filters.kanban[el.dataset.key] = el.value; renderView(); },
