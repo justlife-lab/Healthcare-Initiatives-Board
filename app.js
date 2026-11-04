@@ -165,7 +165,7 @@
     if (!(S.subOpen && S.subOpen.has(t.TaskID))) return '';
     const s = parseSubs(t.Subtasks); if (!s.length) return '';
     return `<tr class="sub-tr"><td></td><td colspan="${colspan - 1}"><div class="sub-inline">${s.map((x, i) => `<div class="sub-row ${x.done ? 'done' : ''}">
-      <label class="check"><input type="checkbox" ${x.done ? 'checked' : ''} ${canTickSub(t, x) ? '' : 'disabled'} data-change="subToggleRow" data-id="${esc(t.TaskID)}" data-i="${i}"><span>${esc(x.title)}</span></label>
+      <label class="check"><input type="checkbox" ${x.done ? 'checked' : ''} ${canTickSub(t, x) ? '' : 'disabled'} data-change="subToggleRow" data-id="${esc(t.TaskID)}" data-i="${i}"><span>${esc(x.title)}</span>${x.done ? '<em class="sub-done">✓ Completed</em>' : ''}</label>
       <span class="sub-owner">${x.owner ? `${avatar(x.owner, 'sm')}${esc(uname(x.owner))}` : '<span class="faint">Unassigned</span>'}</span></div>`).join('')}</div></td></tr>`;
   }
   /** Progress follows the stage automatically: Parked 0 → Under design 33 → Build 67 → Live 100 (Done 100). */
@@ -1062,7 +1062,7 @@
       return `<div class="kcard ${isOverdue(t) ? 'overdue' : ''}" data-action="openTask" data-id="${esc(t.TaskID)}" ${draggable ? 'draggable="true"' : ''} tabindex="0" aria-label="${esc(t.Title)}">
         <div class="meta"><span class="idtag">${esc(t.TaskID)}</span><span class="right">${priPill(t.Priority)}</span></div>
         <div class="t">${esc(t.Title)}</div>
-        ${parseSubs(t.Subtasks).length ? `<ul class="ksubs">${parseSubs(t.Subtasks).map((x) => `<li class="${x.done ? 'done' : ''}"><i></i><span>${esc(x.title)}</span>${x.owner ? `<span class="ko" title="${esc(uname(x.owner))}">${esc(uname(x.owner).split(' ')[0])}</span>` : ''}</li>`).join('')}</ul>` : ''}
+        ${parseSubs(t.Subtasks).length ? `<ul class="ksubs">${parseSubs(t.Subtasks).map((x) => `<li class="${x.done ? 'done' : ''}"><i></i><span>${esc(x.title)}</span>${x.done ? '<em class="sub-done">✓ Completed</em>' : ''}${x.owner ? `<span class="ko" title="${esc(uname(x.owner))}">${esc(uname(x.owner).split(' ')[0])}</span>` : ''}</li>`).join('')}</ul>` : ''}
         ${t.Category || t.Meeting ? `<div class="meta">${t.Category ? `<span class="ctag">${esc(t.Category)}</span>` : ''}${t.Meeting ? `<span>${esc(t.Meeting)}</span>` : ''}</div>` : ''}
         ${progressBar(effProgress(t), effProgress(t) === 100)}
         <div class="meta">${avatar(t.AssignedTo, 'sm')}<span>${dueCell(t)}</span><span class="right">${commentBadge(t)}</span></div></div>`;
@@ -1779,7 +1779,7 @@
     const ownerSel = (sel, attrs) => `<select class="select select-sm sub-owner-sel" ${attrs}>${opts([{ v: '', l: 'Unassigned' }].concat(activeUsers().map((u) => ({ v: u.Email, l: u.Name }))), sel || '')}</select>`;
     return `<div class="subtasks"><div class="sub-head"><b>Subtasks</b><span class="muted">${subs.length ? `${done} of ${subs.length} done` : `Add up to ${MAX_SUBTASKS}`}</span>${subs.length > 1 ? `<span class="sub-bar"><i style="width:${Math.round(done / subs.length * 100)}%"></i></span>` : ''}</div>
       <div class="sub-list">${subs.map((x, i) => `<div class="sub-row ${x.done ? 'done' : ''}">
-        <label class="check"><input type="checkbox" ${x.done ? 'checked' : ''} ${canTickSub(t, x) ? '' : 'disabled'} data-change="subToggle" data-i="${i}"><span>${esc(x.title)}</span></label>
+        <label class="check"><input type="checkbox" ${x.done ? 'checked' : ''} ${canTickSub(t, x) ? '' : 'disabled'} data-change="subToggle" data-i="${i}"><span>${esc(x.title)}</span>${x.done ? '<em class="sub-done">✓ Completed</em>' : ''}</label>
         ${editable ? ownerSel(x.owner, `data-change="subOwner" data-i="${i}" aria-label="Assign subtask"`) : `<span class="sub-owner">${x.owner ? `${avatar(x.owner, 'sm')}${esc(uname(x.owner))}` : '<span class="faint">Unassigned</span>'}</span>`}
         ${editable ? `<button class="icon-btn sm" data-action="subDelete" data-i="${i}" title="Remove subtask" aria-label="Remove subtask">${icon('x', 'ic-sm')}</button>` : ''}</div>`).join('')}</div>
       ${editable && subs.length < MAX_SUBTASKS ? `<div class="sub-add"><input class="input" id="subNew" maxlength="200" placeholder="Add a subtask (${subs.length + 1} of ${MAX_SUBTASKS}) and press Enter">${ownerSel('', 'id="subNewOwner" aria-label="Assign new subtask to"')}<button class="btn btn-sm" data-action="subAdd">${icon('plus', 'ic-sm')}Add</button></div>` : ''}

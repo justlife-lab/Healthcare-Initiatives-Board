@@ -711,13 +711,14 @@ table.tbl { width: 100%; border-collapse: collapse; }
 .sub-row:first-of-type { border-top: 0; }
 .sub-row .check { flex: 1; display: flex; align-items: center; gap: 9px; font-size: 13.5px; cursor: pointer; margin: 0; }
 .sub-row .check input { width: 16px; height: 16px; accent-color: var(--teal-600); flex: none; }
-.sub-row.done .check span { text-decoration: line-through; color: var(--muted); }
+.sub-row.done .check span { color: var(--text); }
+.sub-done { flex: none; font-style: normal; font-size: 11px; font-weight: 700; color: #15803D; background: #DCFCE7; border-radius: 10px; padding: 1px 8px; margin-left: 4px; white-space: nowrap; }
 .sub-add { display: flex; gap: 8px; margin-top: 8px; }
 .sub-add .input { height: 32px; font-size: 13px; }
 .ksubs { list-style: none; margin: 6px 0 2px; padding: 0; font-size: 12px; color: var(--text-2); }
 .ksubs li { display: flex; align-items: baseline; gap: 6px; line-height: 1.45; }
 .ksubs li i { flex: none; width: 9px; height: 9px; border: 1.5px solid var(--border-strong); border-radius: 2px; transform: translateY(1px); }
-.ksubs li.done { color: var(--muted); text-decoration: line-through; }
+.ksubs li.done .sub-done { font-size: 10px; padding: 0 6px; margin-left: 0; }
 .ksubs li.done i { background: var(--teal-600); border-color: var(--teal-600); }
 
 .sub-tr td { background: #F8FAFD; border-top: 0; padding-top: 2px; padding-bottom: 10px; cursor: default; }
